@@ -120,3 +120,127 @@ A simulation exercises CSV and plot generation without Pico SDK or hardware.
 - [PicoScope PS6000A programmer's guide](https://www.picotech.com/download/manuals/picoscope-6000-series-a-api-programmers-guide.pdf)
 # rd53-current-scan
 # rd53-current-scan
+
+
+## Desktop test station and Venelin ADC support
+
+Update and launch:
+
+```bash
+git pull
+python -m pip install -r requirements-gui.txt
+python gui.py
+```
+
+The GUI starts in **simulation** mode. Set the Hameg device (default now
+`/dev/hmp4040-1`), choose Pico or Venelin, and assign physical measurement inputs
+to board/testpoint pairs. Start/stop controls, live plots, voltage readouts and
+progress are included. Current fields in the GUI are **mA**; command-line current
+arguments remain **A**. Configure Pico probe factors explicitly to match x1/x10
+switches. Input assignments document your physical wiring; software does not
+move probes or operate a hardware multiplexer.
+
+- Add independent RD53 board IDs and testpoint names.
+- Click a testpoint to select its assignment row; the row fields are editable.
+- Load a board photo, enable “Place / move testpoints on click”, and click to add
+  a named marker or move an existing one. Coordinates are saved with the profile.
+- Save/load JSON wiring profiles, including probe factors, ranges and ADC paths.
+  Photo paths are absolute local paths; copy photos separately when moving machines.
+- Start a simulated run first. Hardware runs require checking the wiring/limits
+  checkbox. Stop requests cooperative shutdown without force-killing the worker;
+  closing the window while running requests Stop and defers closure until stopped.
+  A single Pico block can take until its acquisition timeout to return.
+
+The default graphic is a **schematic**, not a verified drawing of your PCB.
+Vref/Vout are measurement labels, not inferred connector or TP numbers. Supply
+safe ratings and physical testpoint positions from your actual board documentation.
+
+### Venelin setup
+
+Use the updated `SimonGB/pmod_adc` checkout and build its C++ helpers first.
+The scan uses `install/bin/pm_adcs_quick_ini` for normal initialization at the
+selected sample rate and `pm_adcs_startl` for fresh finite records. Set its serial
+port at build time as described in that project's README. Close its GUI and
+other acquisition processes before running this station; helper initialization
+stops an existing board stream.
+
+In the Venelin GUI tab choose that repository's root, `exe/pgm/config.toml`,
+and the decoded data path (normally `exe/pgm/fadc.dat`). The helper's compiled
+output path must match the selected data path. Select a sample rate of 250,
+500, 1000, 2000, 4000, 8000, 16000 or 32000 S/s. The new adapter controls only
+one ADC motherboard and its PMOD1..6 modules.
+
+Channel IDs are physical `PMODn_Ch0..7` identities. The adapter derives sparse
+acquisition masks, then matches decoded file-header identities to channels;
+it never assumes that CSV column number is the global channel number. Input
+profiles come from the TOML `[BoardInputs]` and `[Calibration]` sections:
+
+- `dV`: signed ADC code × connector full-scale voltage / 2^(bits−1).
+- `I`: convert shunt voltage, then divide by configured measurement shunt ohms.
+- `aV`: use its configured absolute-voltage full-scale span.
+
+Fitted types/gains must agree with the hardware. Software cannot turn an I input
+into a dV input. The adapter applies nominal configured scaling; it **does not
+import the PMOD GUI's separate two-point calibration records**. It does not run
+zero calibration. ADC full-scale clipping, missing inputs, malformed/short
+captures, acquisition timeouts and unchanged output files cause an error and
+supply shutdown. A frame's physical inputs are sampled together; consecutive
+captures and Pico versus ADC runs are not synchronized with each other.
+
+Example using a wiring profile (replace its ADC paths first):
+
+```bash
+python scan.py --profile profiles/venelin-example.json \
+  --port /dev/hmp4040-1 --start 0.005 --stop 0.050 --step 0.005 \
+  --voltage-limit 3.5 --max-current 0.450 \
+  --sample-rate 1000 --capture-time 0.1 --captures 10 \
+  --name board1_adc --reverse --save-waveforms
+```
+
+These current/voltage values reflect the earlier bench command and are not
+universal RD53 ratings. `profiles/pico-example.json` preserves A/B wiring with
+x1 factors; adjust them if your probes are x10. Add `--simulate` to test either
+profile without hardware. Original scans without `--profile` remain supported.
+
+### Multiple RD53 boards
+
+Multiple board IDs may be monitored during one shared Hameg-channel current
+sweep. The Pico adapter currently supports **two total mapped inputs**; these
+can be on different boards only when their measurement returns permit it. The
+Venelin adapter can select up to **48 inputs** across six PMOD modules, subject
+to installed modules and their fitted input types. This update does not control
+multiple independent supplies or sequence separate boards with relays.
+
+For a serial chain, verify differential-input common mode, amplifier supply
+rails and total chain voltage against the actual ADC board documentation. The
+board quickstart gives a nominal differential common-mode range of 0..27 V;
+ordinary Pico probes share ground, and ADC inputs are not isolated. Physical
+wiring must not short floating board returns together.
+
+### Mapped output and fluctuations
+
+Mapped runs create `measurements.csv` in **long format**, one row per board /
+testpoint / current point, plus `mapped_voltages.png/.pdf` and metadata containing
+the complete wiring profile, input scaling and run status.
+
+- `capture_std`: standard deviation between repeated record means (plot bars).
+  Empty when only one capture exists, since that statistic cannot be estimated.
+- `sample_std`: sample standard deviation across all recorded samples, including
+  between-record shifts.
+- `within_capture_rms`: RMS fluctuations around each record's own mean.
+- `peak_to_peak`: maximum minus minimum across all captures at that point.
+
+V channels use V and I channels use A for these statistics. None of these is a
+calibrated total measurement uncertainty. Samples can be correlated; increasing
+sample count alone does not eliminate systematic errors. Raw `.npz` files store
+scaled signals and nominal sample interval; acquisition gaps between records
+are not part of that interval.
+
+### Useful next additions
+
+Prioritize a measured gain/offset calibration with provenance; voltage/temperature
+abort thresholds; repeat-scan overlays and board comparison; automatic settling
+detection; long-duration drift monitoring; and load-step measurements. Later,
+add topology profiles for parallel/series/mixed configurations, independent supply
+channels and hardware switching only after the corresponding wiring and hardware
+interfaces are defined.

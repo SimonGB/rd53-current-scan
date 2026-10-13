@@ -1,0 +1,42 @@
+{
+  "backend": "venelin",
+  "boards": [
+    {
+      "id": "board1",
+      "image": "",
+      "testpoints": [
+        {
+          "name": "Vref",
+          "x": 0.3,
+          "y": 0.65
+        },
+        {
+          "name": "Vout",
+          "x": 0.7,
+          "y": 0.65
+        }
+      ]
+    }
+  ],
+  "mappings": [
+    {
+      "board": "board1",
+      "testpoint": "Vref",
+      "channel": "PMOD1_Ch0",
+      "probe": 1,
+      "range": 2
+    },
+    {
+      "board": "board1",
+      "testpoint": "Vout",
+      "channel": "PMOD1_Ch1",
+      "probe": 1,
+      "range": 2
+    }
+  ],
+  "adc": {
+    "root": "/path/to/pmod_adc",
+    "config": "/path/to/pmod_adc/exe/pgm/config.toml",
+    "data": "/path/to/pmod_adc/exe/pgm/fadc.dat"
+  }
+}

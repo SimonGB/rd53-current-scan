@@ -81,7 +81,7 @@ def parser():
     p.add_argument('--step', type=float, required=True, help='Current step [A]')
     p.add_argument('--voltage-limit', type=float, required=True, help='Board-safe compliance voltage [V]')
     p.add_argument('--max-current', type=float, required=True, help='Explicit board-safe maximum current [A]')
-    p.add_argument('--port', default='/dev/ttyUSB1')
+    p.add_argument('--port', default='/dev/hmp4040-1')
     p.add_argument('--baudrate', type=int, default=9600)
     p.add_argument('--channel', type=int, choices=range(1, 5), default=2)
     p.add_argument('--settle', type=float, default=1, help='Settling delay per current point [s]')
@@ -96,6 +96,7 @@ def parser():
     p.add_argument('--reverse', action='store_true', help='Also scan down to start')
     p.add_argument('--save-waveforms', action='store_true')
     p.add_argument('--simulate', action='store_true', help='No instruments used')
+    p.add_argument('--profile', type=Path, help='Wiring JSON profile: enables mapped Pico/Venelin measurements')
     p.add_argument('--name', default='rd53_v2')
     p.add_argument('--output', type=Path, default=Path('results'))
     return p
@@ -225,9 +226,20 @@ def run(args, supply=None, scope=None):
 
 if __name__ == '__main__':
     try:
-        run(parser().parse_args())
-    except KeyboardInterrupt:
+        args = parser().parse_args()
+        if args.profile:
+            from mapping import load_profile
+            from station import run_mapped
+            import signal
+            import threading
+            stop = threading.Event()
+            signal.signal(signal.SIGTERM, lambda *_: stop.set())
+            run_mapped(args, load_profile(args.profile), cancel=stop)
+        else:
+            run(args)
+    except (KeyboardInterrupt, InterruptedError):
         sys.exit(130)
     except Exception as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         sys.exit(1)
+
