@@ -244,3 +244,22 @@ detection; long-duration drift monitoring; and load-step measurements. Later,
 add topology profiles for parallel/series/mixed configurations, independent supply
 channels and hardware switching only after the corresponding wiring and hardware
 interfaces are defined.
+
+### Linux GUI startup: GNOME antialiasing schema error
+
+If startup aborts with `org.gnome.settings-daemon.plugins.xsettings` missing
+`antialiasing`, the desktop GTK/GNOME theme integration is incompatible with
+its loaded settings schema. On Linux this GUI now selects Qt generic theming
+and Fusion style before constructing QApplication. These settings apply only
+to this process; the system desktop configuration is unchanged.
+
+Update with `git pull` and launch `python gui.py`. For an older checkout, try:
+
+```bash
+QT_QPA_PLATFORMTHEME=generic QT_STYLE_OVERRIDE=Fusion python gui.py
+```
+
+To explicitly opt back into native desktop themes, use
+`RD53_NATIVE_QT_THEME=1 python gui.py`. This bypass has been startup-tested
+in an offscreen environment; the reported desktop crash cannot be reproduced
+without the bench computer\x27s library/schema combination.

@@ -4,7 +4,14 @@ import copy
 import json
 from pathlib import Path
 import sys
+import os
 import threading
+
+# Avoid system GTK/GNOME theme plugins whose GSettings schema may mismatch
+# the libraries loaded by a scientific Python environment. Process-local only.
+if sys.platform.startswith("linux") and os.environ.get("RD53_NATIVE_QT_THEME") != "1":
+    os.environ["QT_QPA_PLATFORMTHEME"] = "generic"
+    os.environ["QT_STYLE_OVERRIDE"] = "Fusion"
 from PyQt6.QtCore import Qt,QThread,pyqtSignal
 from PyQt6.QtGui import QColor,QPainter,QPen,QPixmap,QFont
 from PyQt6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,
