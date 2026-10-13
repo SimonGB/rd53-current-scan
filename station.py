@@ -101,11 +101,12 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None):
             units={m['channel']:('A' if reader.profiles[m['channel']]['kind']=='I' else 'V') for m in mappings}
     out=args.output/args.name/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S_%fZ');out.mkdir(parents=True)
     metadata={'settings':{k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
-              'profile':profile,'simulation':args.simulate,'status':'initializing','completed_points':0}
+              'comments':getattr(args,'comments',''),'profile':profile,'simulation':args.simulate,'status':'initializing','completed_points':0}
+    (out/'comments.txt').write_text(getattr(args,'comments',''),encoding='utf-8')
     rows=[];armed=False;failure=None;errors=[]
     fields=['point','direction','timestamp_UTC','board','testpoint','input','unit','current_set_A',
             'current_measured_A','supply_voltage_V','current_tracking_ok','mean','capture_std',
-            'sample_std','within_capture_rms','peak_to_peak','samples']
+            'sample_std','within_capture_rms','peak_to_peak','samples','comments']
     try:
         reader.connect();supply.connect()
         metadata['supply_identity']=supply.identity;metadata['reader_identity']=reader.identity
@@ -136,7 +137,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None):
                     row=dict(point=index,direction=direction,timestamp_UTC=timestamp,board=m['board'],
                         testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],current_set_A=current,
                         current_measured_A=measured,supply_voltage_V=voltage,
-                        current_tracking_ok=abs(measured-current)<=max(.0001,.02*current),**stats)
+                        current_tracking_ok=abs(measured-current)<=max(.0001,.02*current),comments=getattr(args,'comments',''),**stats)
                     batch.append(row)
                 writer.writerows(batch);f.flush();rows.extend(batch)
                 if args.save_waveforms:

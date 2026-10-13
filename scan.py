@@ -97,6 +97,7 @@ def parser():
     p.add_argument('--save-waveforms', action='store_true')
     p.add_argument('--simulate', action='store_true', help='No instruments used')
     p.add_argument('--profile', type=Path, help='Wiring JSON profile: enables mapped Pico/Venelin measurements')
+    p.add_argument('--comments', default='', help='Run comments saved with data (quote multiline text)')
     p.add_argument('--name', default='rd53_v2')
     p.add_argument('--output', type=Path, default=Path('results'))
     return p
@@ -137,6 +138,7 @@ def run(args, supply=None, scope=None):
         raise ValueError('Scope required with injected supply')
     directory = args.output/args.name/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S_%fZ')
     directory.mkdir(parents=True, exist_ok=False)
+    (directory/'comments.txt').write_text(getattr(args,'comments',''), encoding='utf-8')
     metadata = {**vars(args), 'output':str(args.output), 'status':'initializing',
                 'points_A':points, 'simulation':args.simulate,
                 'channel_mapping':{'HMP':args.channel, 'reference':'A', 'output':'B'}}
@@ -168,7 +170,8 @@ def run(args, supply=None, scope=None):
             row = dict(point=index, direction=direction, timestamp_UTC=datetime.now(timezone.utc).isoformat(),
                        current_set_A=current, current_measured_A=measured,
                        current_before_A=before, current_after_A=after, supply_voltage_V=voltage,
-                       current_tracking_ok=abs(measured-current) <= max(.0001, .02*current))
+                       current_tracking_ok=abs(measured-current) <= max(.0001, .02*current),
+                       comments=getattr(args,'comments',''))
             for i, signal in enumerate(('reference', 'output')):
                 waves = [np.asarray(c[i], dtype=float) for c in captures]
                 if any(w.size < 2 or not np.isfinite(w).all() for w in waves):

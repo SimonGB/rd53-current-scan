@@ -96,6 +96,10 @@ class Window(QMainWindow):
             self.fields[name]=box;form.addRow(label,box)
         self.captures=QSpinBox();self.captures.setRange(1,10000);self.captures.setValue(10);form.addRow('Captures per point',self.captures)
         self.name=QLineEdit('board1');form.addRow('Run name',self.name)
+        notespage=QWidget();noteslayout=QVBoxLayout(notespage)
+        noteslayout.addWidget(QLabel('Run comments — saved with metadata and every CSV row.'))
+        self.comments=QPlainTextEdit();self.comments.setPlaceholderText('Board ID, wiring changes, temperature, observations, unusual behaviour…')
+        noteslayout.addWidget(self.comments);tabs.addTab(notespage,'Comments')
         self.reverse=QCheckBox('Include downward sweep');self.reverse.setChecked(True);form.addRow(self.reverse)
         self.raw=QCheckBox('Save every raw capture');form.addRow(self.raw)
         self.sim=QCheckBox('Simulation — instruments remain untouched');self.sim.setChecked(True);form.addRow(self.sim)
@@ -239,13 +243,13 @@ class Window(QMainWindow):
             argv=['--start',str(self.fields['start'].value()/1000),'--stop',str(self.fields['stop'].value()/1000),
                   '--step',str(self.fields['step'].value()/1000),'--max-current',str(self.fields['max_current'].value()/1000),
                   '--voltage-limit',str(self.fields['voltage_limit'].value())]
-            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text()
+            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.comments=self.comments.toPlainText()
             for n in ('settle','capture_time','sample_rate'):setattr(args,n,self.fields[n].value())
             args.captures=self.captures.value();args.reverse=self.reverse.isChecked();args.simulate=self.sim.isChecked();args.save_waveforms=self.raw.isChecked()
             from scan import current_points
             count=len(current_points(args.start,args.stop,args.step))*(2 if args.reverse else 1)
             self.progress.setRange(0,count);self.progress.setValue(0);self.rows=[];self.redraw();self.running=True
-            self.table.setEnabled(False);self.backend.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
+            self.comments.setReadOnly(True);self.table.setEnabled(False);self.backend.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
             self.state.setText('SIMULATING' if args.simulate else 'MEASURING');self.log.appendPlainText(json.dumps(p,indent=2))
             self.worker=Worker(args,p);self.worker.point.connect(self.point);self.worker.done.connect(self.finished);self.worker.start()
         except Exception as e:QMessageBox.warning(self,'Cannot start',str(e))
@@ -256,7 +260,7 @@ class Window(QMainWindow):
         text=' | '.join(f"{r['board']} {r['testpoint']}: {r['mean']:.5f} {r['unit']} · σ={r['sample_std']:.5g}" for r in batch)
         self.readout.setText(text);self.log.appendPlainText(text);self.redraw()
     def finished(self,text,ok):
-        self.running=False;self.startbtn.setEnabled(True);self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True)
+        self.running=False;self.comments.setReadOnly(False);self.startbtn.setEnabled(True);self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True)
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
         self.readout.setText(text)
     def redraw(self):

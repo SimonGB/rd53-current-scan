@@ -263,3 +263,14 @@ To explicitly opt back into native desktop themes, use
 `RD53_NATIVE_QT_THEME=1 python gui.py`. This bypass has been startup-tested
 in an offscreen environment; the reported desktop crash cannot be reproduced
 without the bench computer\x27s library/schema combination.
+
+### Run comments
+
+Use the GUI's **Comments** tab before starting a scan. Notes are stored in
+`comments.txt`, run metadata and the `comments` column of every CSV row.
+Multiline text is preserved with CSV quoting. The field is read-only during
+a run, so notes cannot silently diverge from the saved data. Notes remain
+in the GUI for the next run; edit or clear them as needed.
+
+The CLI also supports `--comments "Board 1; probes x10; room temperature 23 C"`
+with or without a wiring profile.
