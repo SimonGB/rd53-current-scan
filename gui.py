@@ -110,6 +110,7 @@ class Window(QMainWindow):
             row=QWidget();hl=QHBoxLayout(row);hl.setContentsMargins(0,0,0,0);edit=QLineEdit();btn=QPushButton('Browse')
             self.adcfields[n]=edit;hl.addWidget(edit);hl.addWidget(btn);af.addRow(label,row)
             btn.clicked.connect(lambda _,key=n:self.browse_adc(key))
+        self.inputinfo=QPushButton('Show effective ADC types / units');self.inputinfo.clicked.connect(self.show_inputs);af.addRow(self.inputinfo)
         note=QLabel('Uses built install/bin helpers. Close the PMOD GUI first.\nSerial device is configured by the pmod_adc build.\nSelect 250–32000 S/s; fitted input types come from config.toml.\nNormal initialization runs before each scan; no zero calibration.');note.setWordWrap(True);af.addRow(note)
         note=QLabel('Multiple boards share one swept supply channel.\nInput assignment records wiring; it does not switch connections.\nADC inputs are not isolated: verify chain common-mode limits.');note.setWordWrap(True);ll.addWidget(note)
         buttons=QHBoxLayout();self.startbtn=QPushButton('▶  Start scan');self.startbtn.setStyleSheet('background:#177e6a;font-weight:700')
@@ -152,6 +153,20 @@ class Window(QMainWindow):
         if key=='root':
             self.adcfields['config'].setText(str(Path(path)/'exe/pgm/config.toml'))
             self.adcfields['data'].setText(str(Path(path)/'exe/pgm/fadc.dat'))
+
+    def show_inputs(self):
+        try:
+            from venelin import input_profiles
+            profiles=input_profiles(self.adcfields['config'].text())
+            lines=[]
+            for m in self.read_mapping():
+                p=profiles[m['channel']];unit='A' if p['kind']=='I' else 'V'
+                full=p['full_scale_volts']/(p['shunt_ohms'] if unit=='A' else 1)
+                lines.append(f"{m['channel']} → {m['board']} {m['testpoint']}: {p['kind']}, [{unit}], full scale {full:g} {unit}")
+            setup=Path(self.adcfields['config'].text()).parent/'gui_board_inputs.json'
+            source=str(setup) if setup.exists() else self.adcfields['config'].text()+' + confirmed RD53 defaults'
+            QMessageBox.information(self,'Effective ADC input scaling','Source: '+source+'\n\n'+'\n'.join(lines))
+        except Exception as e:QMessageBox.warning(self,'Cannot read ADC input setup',str(e))
 
     def read_mapping(self):
         result=[]
@@ -264,15 +279,19 @@ class Window(QMainWindow):
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
         self.readout.setText(text)
     def redraw(self):
-        self.figure.clear();ax=self.figure.add_subplot(111);ax.set_facecolor('#101f2e')
-        targets=list(dict.fromkeys((r['board'],r['testpoint'],r['unit'],r['direction']) for r in self.rows))
-        for board,tp,unit,direction in targets:
-            rr=[r for r in self.rows if (r['board'],r['testpoint'],r['unit'],r['direction'])==(board,tp,unit,direction)]
-            ax.errorbar([r['current_measured_A']*1000 for r in rr],[r['mean'] for r in rr],
-                yerr=[r['capture_std'] or 0 for r in rr],marker='o',markersize=3,label=f'{board} {tp} [{unit}] {direction}')
-        ax.set_xlabel('Measured supply current [mA]',color='#c6d8e9');ax.set_ylabel('Signal (units in legend)',color='#c6d8e9')
-        ax.tick_params(colors='#c6d8e9');ax.grid(alpha=.15)
-        if targets:ax.legend(fontsize=8)
+        self.figure.clear()
+        units=list(dict.fromkeys(r['unit'] for r in self.rows)) or ['V']
+        for index,unit in enumerate(units):
+            ax=self.figure.add_subplot(len(units),1,index+1);ax.set_facecolor('#101f2e')
+            targets=list(dict.fromkeys((r['board'],r['testpoint'],r['direction']) for r in self.rows if r['unit']==unit))
+            for board,tp,direction in targets:
+                rr=[r for r in self.rows if (r['board'],r['testpoint'],r['unit'],r['direction'])==(board,tp,unit,direction)]
+                ax.errorbar([r['current_measured_A']*1000 for r in rr],[r['mean'] for r in rr],
+                    yerr=[r['capture_std'] or 0 for r in rr],marker='o',markersize=3,label=f'{board} {tp} {direction}')
+            ax.set_xlabel('Measured supply current [mA]',color='#c6d8e9')
+            ax.set_ylabel('Current [A]' if unit=='A' else 'Voltage [V]',color='#c6d8e9')
+            ax.tick_params(colors='#c6d8e9');ax.grid(alpha=.15)
+            if targets:ax.legend(fontsize=8)
         self.figure.tight_layout();self.canvas.draw_idle()
     def closeEvent(self,event):
         if self.worker and self.worker.isRunning():
@@ -282,3 +301,4 @@ class Window(QMainWindow):
 
 if __name__=='__main__':
     app=QApplication(sys.argv);window=Window();window.show();sys.exit(app.exec())
+

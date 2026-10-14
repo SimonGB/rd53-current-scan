@@ -22,14 +22,14 @@
     {
       "board": "board1",
       "testpoint": "Vref",
-      "channel": "PMOD1_Ch0",
+      "channel": "PMOD1_Ch1",
       "probe": 1,
       "range": 2
     },
     {
       "board": "board1",
       "testpoint": "Vout",
-      "channel": "PMOD1_Ch1",
+      "channel": "PMOD1_Ch2",
       "probe": 1,
       "range": 2
     }

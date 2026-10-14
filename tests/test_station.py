@@ -29,9 +29,36 @@ class StationTests(unittest.TestCase):
             self.assertEqual(args[args.index('--fadc-mask-0-31')+1],'0x1')
             self.assertEqual(args[args.index('--fadc-mask-32-47')+1],'0x1')
             self.assertEqual(args[args.index('--adc24-flag')+1],'0x1')
-            np.testing.assert_allclose(values['PMOD5_Ch0'],[.9,.9])
+            np.testing.assert_allclose(values['PMOD5_Ch0'],[.6,.6])
             reader.command=lambda *args:None
             with self.assertRaisesRegex(RuntimeError,'fresh data'):reader.capture()
+
+    def test_confirmed_rd53_types_and_voltage_scaling(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg=Path(d)/'config.toml';cfg.write_text('[Calibration]\nPrecisionBits=24\n')
+            profiles=input_profiles(cfg)
+            for pmod in range(1,7):
+                self.assertEqual(profiles[f'PMOD{pmod}_Ch0']['kind'],'I')
+                self.assertEqual(profiles[f'PMOD{pmod}_Ch3']['kind'],'dV' if pmod<=2 else 'I')
+            data=Path(d)/'fadc.dat'
+            data.write_text('# ADC_CH3(PMOD1_I3)\n0 0x1 4194304\n1 0x2 4194304\n')
+            values,_=decode_file(data,['PMOD1_Ch3'],profiles)
+            np.testing.assert_allclose(values['PMOD1_Ch3'],[1.8,1.8])
+
+    def test_saved_pmod_gui_setup_overrides_toml(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg=Path(d)/'config.toml'
+            cfg.write_text('[BoardInputs.PMOD1]\nKinds=["dV","dV","dV","I","I","I","aV","aV"]\n')
+            profiles=input_profiles(cfg)
+            self.assertEqual(profiles['PMOD1_Ch3']['kind'],'I')
+            profiles['PMOD1_Ch3'].update(kind='dV',full_scale_volts=3.6)
+            setup=Path(d)/'gui_board_inputs.json'
+            setup.write_text(json.dumps({'version':1,'channel_profiles':profiles}))
+            corrected=input_profiles(cfg)
+            self.assertEqual(corrected['PMOD1_Ch3']['kind'],'dV')
+            self.assertEqual(corrected['PMOD1_Ch3']['full_scale_volts'],3.6)
+            setup.write_text('{"version":1,"channel_profiles":{}}')
+            with self.assertRaises(ValueError):input_profiles(cfg)
 
     def test_statistics(self):
         s=summaries([np.array([1.,3.]),np.array([3.,5.])])
@@ -83,3 +110,4 @@ class StationTests(unittest.TestCase):
             profiles=input_profiles(p);self.assertEqual(profiles['PMOD1_Ch3']['kind'],'dV')
 
 if __name__=='__main__':unittest.main()
+

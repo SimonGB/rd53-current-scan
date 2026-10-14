@@ -274,3 +274,31 @@ in the GUI for the next run; edit or clear them as needed.
 
 The CLI also supports `--comments "Board 1; probes x10; room temperature 23 C"`
 with or without a wiring profile.
+
+### Input types shared with the PMOD GUI
+
+The RD53 adapter now loads `gui_board_inputs.json` beside the selected
+`config.toml`, when present. This is the input setup saved by the PMOD GUI;
+it takes precedence over TOML input profiles. Invalid saved setups abort
+instead of silently reverting. Without a saved setup, explicit TOML profiles
+still override the confirmed RD53-rig defaults:
+
+| Modules | Current inputs | Differential voltage inputs | Absolute voltage inputs |
+| --- | --- | --- | --- |
+| PMOD1/2 | Ch0 | Ch1..Ch5 | Ch6/7 |
+| PMOD3..6 | Ch0, Ch3 | Ch1, Ch2, Ch4, Ch5 | Ch6/7 |
+
+Use **Venelin / ADC → Show effective ADC types / units** to inspect the selected
+inputs, their engineering-unit full scale and the active settings source before
+running. If an existing saved setup or explicit TOML profile still identifies
+PMOD1 Ch3 as I, correct it in the PMOD GUI's input editor and save, then restart
+the RD53 acquisition. Do not simply relabel old data: an incorrect type changes
+the numeric conversion as well as the unit.
+
+At nominal scales, a raw half-scale code on a dV input means 1.8 V; treating it
+as an I input with 12 mV full scale and a 5 mOhm measurement shunt instead yields
+1.2 A. Both the type and the full-scale/shunt settings must match fitted hardware.
+The RD53 live plot now separates V and A signals onto distinct labelled axes;
+CSV remains in V/A, while the swept Hameg current axis is displayed in mA.
+The example Venelin wiring now uses Ch1/Ch2, leaving the fitted Ch0 current input
+unassigned. Existing user wiring profiles retain their explicit assignments.

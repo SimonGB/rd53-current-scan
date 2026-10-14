@@ -1,4 +1,5 @@
 """Finite acquisitions through SimonGB/pmod_adc's existing compiled helpers."""
+import json
 import math
 from pathlib import Path
 import re
@@ -12,16 +13,17 @@ except ImportError:
     import tomli as tomllib
 
 
-def input_profiles(path):
+def input_profiles(path, input_setup=None):
     with Path(path).open('rb') as f: config=tomllib.load(f)
     cal=config.get('Calibration',{})
     bits=int(cal.get('PrecisionBits',24))
     if bits not in (16,24): raise ValueError('PrecisionBits must be 16 or 24')
     profiles={}
-    legacy=['dV','dV','dV','I','I','I','aV','aV']
+    # Confirmed RD53 rig: Ch0 is I on all PMODs; Ch3 is I on PMOD3..6.
+    kinds_by_pmod={p:['I','dV','dV','I' if p>=3 else 'dV','dV','dV','aV','aV'] for p in range(1,7)}
     for p in range(1,7):
         table=config.get('BoardInputs',{}).get(f'PMOD{p}',{})
-        kinds=table.get('Kinds',legacy)
+        kinds=table.get('Kinds',kinds_by_pmod[p])
         defaults={'dV':cal.get('DiffVoltRef',3.6),'I':cal.get('DiffCurrRef',.012),'aV':cal.get('AbsVoltRef',64)}
         spans=table.get('FullScaleVolts',[defaults[k] for k in kinds])
         shunts=table.get('ShuntOhms',[cal.get('ShuntRef',.005)]*8)
@@ -34,6 +36,24 @@ def input_profiles(path):
                 raise ValueError('ADC spans/shunts must be positive and finite')
             profiles[f'PMOD{p}_Ch{ch}']={'kind':kind,'full_scale_volts':float(span),
                                         'shunt_ohms':float(shunt),'bits':bits}
+    setup=Path(input_setup) if input_setup else Path(path).parent/'gui_board_inputs.json'
+    if setup.exists():
+        saved=json.loads(setup.read_text(encoding='utf-8'))
+        expected=set(profiles)
+        if not isinstance(saved,dict) or saved.get('version')!=1:
+            raise ValueError('Unsupported saved PMOD input setup')
+        records=saved.get('channel_profiles')
+        if not isinstance(records,dict) or set(records)!=expected:
+            raise ValueError('Saved PMOD input setup must contain all 48 channels')
+        for identity,record in records.items():
+            if not isinstance(record,dict):raise ValueError(f'{identity}: invalid saved input')
+            kind=record.get('kind')
+            if kind not in (('dV','I') if int(identity[-1])<6 else ('aV',)):
+                raise ValueError(f'{identity}: invalid fitted type')
+            values=[record.get('full_scale_volts'),record.get('shunt_ohms')]
+            if any(isinstance(v,bool) or v is None or not math.isfinite(float(v)) or float(v)<=0 for v in values):
+                raise ValueError(f'{identity}: invalid saved scale/shunt')
+            profiles[identity]=dict(kind=kind,full_scale_volts=float(values[0]),shunt_ohms=float(values[1]),bits=bits)
     return profiles
 
 
@@ -139,3 +159,4 @@ class Venelin:
         if self.process is not None:
             self.process.send_signal(signal.SIGINT)
             self.process.wait(timeout=3)
+
