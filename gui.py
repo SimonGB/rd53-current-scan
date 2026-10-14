@@ -23,16 +23,17 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from mapping import default_profile,validate_profile
 from scan import parser
 from station import run_mapped
+from run_comments import RunComments
 
 
 class Worker(QThread):
     point=pyqtSignal(object)
     done=pyqtSignal(str,bool)
     def __init__(self,args,profile):
-        super().__init__();self.args=args;self.profile=profile;self.stop=threading.Event()
+        super().__init__();self.args=args;self.profile=profile;self.stop=threading.Event();self.notes=RunComments(args.comments)
     def run(self):
         try:
-            out=run_mapped(self.args,self.profile,self.stop,self.point.emit)
+            out=run_mapped(self.args,self.profile,self.stop,self.point.emit,notes=self.notes)
             self.done.emit(f'Completed · {out}',True)
         except BaseException as e:self.done.emit(f'{type(e).__name__}: {e}',False)
 
@@ -97,8 +98,9 @@ class Window(QMainWindow):
         self.captures=QSpinBox();self.captures.setRange(1,10000);self.captures.setValue(10);form.addRow('Captures per point',self.captures)
         self.name=QLineEdit('board1');form.addRow('Run name',self.name)
         notespage=QWidget();noteslayout=QVBoxLayout(notespage)
-        noteslayout.addWidget(QLabel('Run comments — saved with metadata and every CSV row.'))
+        noteslayout.addWidget(QLabel('Edit comments during the scan — saved immediately with timestamped revisions.'))
         self.comments=QPlainTextEdit();self.comments.setPlaceholderText('Board ID, wiring changes, temperature, observations, unusual behaviour…')
+        self.comments.textChanged.connect(self.notes_changed)
         noteslayout.addWidget(self.comments);tabs.addTab(notespage,'Comments')
         self.reverse=QCheckBox('Include downward sweep');self.reverse.setChecked(True);form.addRow(self.reverse)
         self.raw=QCheckBox('Save every raw capture');form.addRow(self.raw)
@@ -264,10 +266,17 @@ class Window(QMainWindow):
             from scan import current_points
             count=len(current_points(args.start,args.stop,args.step))*(2 if args.reverse else 1)
             self.progress.setRange(0,count);self.progress.setValue(0);self.rows=[];self.redraw();self.running=True
-            self.comments.setReadOnly(True);self.table.setEnabled(False);self.backend.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
+            self.table.setEnabled(False);self.backend.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
             self.state.setText('SIMULATING' if args.simulate else 'MEASURING');self.log.appendPlainText(json.dumps(p,indent=2))
             self.worker=Worker(args,p);self.worker.point.connect(self.point);self.worker.done.connect(self.finished);self.worker.start()
         except Exception as e:QMessageBox.warning(self,'Cannot start',str(e))
+    def notes_changed(self):
+        if self.running and self.worker:
+            try:self.worker.notes.update(self.comments.toPlainText())
+            except Exception as e:
+                self.log.appendPlainText(f'Could not save comments: {e}')
+                self.stop()
+
     def stop(self):
         if self.worker:self.worker.stop.set();self.state.setText('STOPPING · waiting for safe shutdown');self.stopbtn.setEnabled(False)
     def point(self,batch):
@@ -301,4 +310,5 @@ class Window(QMainWindow):
 
 if __name__=='__main__':
     app=QApplication(sys.argv);window=Window();window.show();sys.exit(app.exec())
+
 

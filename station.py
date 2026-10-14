@@ -9,6 +9,7 @@ import time
 import numpy as np
 from mapping import validate_profile, load_profile
 from scan import current_points, parser, SimSupply
+from run_comments import RunComments
 
 
 def summaries(waves):
@@ -69,8 +70,9 @@ def plot_mapped(rows,out):
     fig.tight_layout();fig.savefig(out/'mapped_voltages.png',dpi=150);fig.savefig(out/'mapped_voltages.pdf')
 
 
-def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None):
+def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,notes=None):
     profile=validate_profile(profile); cancel=cancel or threading.Event()
+    notes=notes or RunComments(getattr(args,'comments',''))
     points=current_points(args.start,args.stop,args.step)
     for name in ('voltage_limit','max_current','sample_rate','capture_time'):
         if not math.isfinite(getattr(args,name)) or getattr(args,name)<=0:raise ValueError(f'Invalid {name}')
@@ -102,15 +104,20 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None):
     out=args.output/args.name/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S_%fZ');out.mkdir(parents=True)
     metadata={'settings':{k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
               'comments':getattr(args,'comments',''),'profile':profile,'simulation':args.simulate,'status':'initializing','completed_points':0}
-    (out/'comments.txt').write_text(getattr(args,'comments',''),encoding='utf-8')
+    notes.bind(out)
     rows=[];armed=False;failure=None;errors=[]
     fields=['point','direction','timestamp_UTC','board','testpoint','input','unit','current_set_A',
             'current_measured_A','supply_voltage_V','current_tracking_ok','mean','capture_std',
-            'sample_std','within_capture_rms','peak_to_peak','samples','comments']
+            'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision']
     try:
-        reader.connect();supply.connect()
+        reader.connect()
+        # Test ADC acquisition before touching the DUT supply. Not a zero calibration.
+        if hasattr(reader,'preflight'):reader.preflight()
+        supply.connect()
         metadata['supply_identity']=supply.identity;metadata['reader_identity']=reader.identity
         if hasattr(reader,'profiles'):metadata['adc_input_profiles']=reader.profiles
+        if hasattr(reader,'chip_mask'):metadata['adc_chip_mask']=hex(reader.chip_mask)
+        if hasattr(reader,'drdy_chip'):metadata['adc_drdy_chip']=reader.drdy_chip
         if hasattr(reader,'driver'):metadata['scope_resolution_bits']=reader.driver.resolution_bits
         if cancel.is_set():raise InterruptedError('Stop requested')
         armed=True;supply.prepare_scan(args.voltage_limit,points[0])
@@ -132,18 +139,20 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None):
                 if not all(math.isfinite(v) for v in (after,voltage)) or after>args.max_current+max(.0001,.02*args.max_current):
                     raise RuntimeError('Invalid or excessive supply readback')
                 measured=(before+after)/2; timestamp=datetime.now(timezone.utc).isoformat();batch=[]
+                comment_text,comment_revision=notes.snapshot()
                 for m in mappings:
                     stats=summaries([np.asarray(c[m['channel']],dtype=float) for c in captures])
                     row=dict(point=index,direction=direction,timestamp_UTC=timestamp,board=m['board'],
                         testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],current_set_A=current,
                         current_measured_A=measured,supply_voltage_V=voltage,
-                        current_tracking_ok=abs(measured-current)<=max(.0001,.02*current),comments=getattr(args,'comments',''),**stats)
+                        current_tracking_ok=abs(measured-current)<=max(.0001,.02*current),comments=comment_text,comments_revision=comment_revision,**stats)
                     batch.append(row)
                 writer.writerows(batch);f.flush();rows.extend(batch)
                 if args.save_waveforms:
                     arrays={f'{c}_capture{j}':v for j,cap in enumerate(captures) for c,v in cap.items()}
                     np.savez_compressed(out/f'waveforms_{index:05d}.npz',sample_interval_s=reader.sample_interval,**arrays)
                 metadata['completed_points']+=1
+                notes.point_completed(index)
                 if on_point:on_point(batch)
                 print(f'{direction}: {measured*1000:.3f} mA · {len(batch)} mapped inputs',flush=True)
         metadata['status']='complete'
@@ -162,7 +171,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None):
         if rows:
             try:plot_mapped(rows,out)
             except Exception as e:metadata['plot_error']=str(e)
-        (out/'metadata.json').write_text(json.dumps(metadata,indent=2)+'\n')
+        notes.finalize(metadata)
         print(f'Results: {out}',flush=True)
     if errors:raise RuntimeError('; '.join(errors)) from failure
     if failure:raise failure
@@ -180,3 +189,4 @@ if __name__=='__main__':
     try:run_mapped(a,load_profile(a.profile),stop)
     except (InterruptedError,KeyboardInterrupt):sys.exit(130)
     except Exception as e:print(f'ERROR: {e}',file=sys.stderr);sys.exit(1)
+

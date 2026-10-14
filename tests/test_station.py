@@ -25,7 +25,11 @@ class StationTests(unittest.TestCase):
                     data.write_text('# p_nr | tstmp | ADC_CH0(PMOD1_dV0) | ADC_CH32(PMOD5_dV0) |\n0 0x1 4194304 2097152\n1 0x2 4194304 2097152\n')
             reader.command=command;reader.connect();values=reader.capture()
             self.assertEqual(calls[0][0],'pm_adcs_quick_ini')
-            args=calls[1][1]
+            init=calls[1][1]
+            self.assertEqual(init[init.index('--chip-mask')+1],'0x11')
+            self.assertEqual(init[init.index('--chip-select')+1],'0')
+            self.assertNotIn('--dry-run',init)
+            args=next(args for name,args in calls if name=='pm_adcs_startl')
             self.assertEqual(args[args.index('--fadc-mask-0-31')+1],'0x1')
             self.assertEqual(args[args.index('--fadc-mask-32-47')+1],'0x1')
             self.assertEqual(args[args.index('--adc24-flag')+1],'0x1')
@@ -110,4 +114,5 @@ class StationTests(unittest.TestCase):
             profiles=input_profiles(p);self.assertEqual(profiles['PMOD1_Ch3']['kind'],'dV')
 
 if __name__=='__main__':unittest.main()
+
 

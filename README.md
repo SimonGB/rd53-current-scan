@@ -268,8 +268,7 @@ without the bench computer\x27s library/schema combination.
 
 Use the GUI's **Comments** tab before starting a scan. Notes are stored in
 `comments.txt`, run metadata and the `comments` column of every CSV row.
-Multiline text is preserved with CSV quoting. The field is read-only during
-a run, so notes cannot silently diverge from the saved data. Notes remain
+Multiline text is preserved with CSV quoting. The field remains editable during a run. Each update is saved with a UTC timestamp and revision; completed CSV rows retain their original point-specific note snapshot. Notes remain
 in the GUI for the next run; edit or clear them as needed.
 
 The CLI also supports `--comments "Board 1; probes x10; room temperature 23 C"`
@@ -302,3 +301,43 @@ The RD53 live plot now separates V and A signals onto distinct labelled axes;
 CSV remains in V/A, while the swept Hameg current axis is displayed in mA.
 The example Venelin wiring now uses Ch1/Ch2, leaving the fitted Ch0 current input
 unassigned. Existing user wiring profiles retain their explicit assignments.
+
+### Multi-PMOD initialization and timeout diagnostics
+
+The RD53 station now derives the ADC chip mask from the mapped inputs and
+passes it to `pm_adcs_quick_ini` together with an active DRDY chip and transfer
+width. Channel readout masks and initialized ADCs therefore describe the same
+modules. PMOD1 + PMOD2 uses chip mask `0x3`; PMOD2 alone uses `0x2` and DRDY
+chip index 1. Only actually installed/connected PMOD modules should be assigned.
+
+Update and rebuild the PMOD helpers once:
+
+```bash
+cd ~/pmod_adc
+git pull
+bash scripts/build.sh
+```
+
+Then update this repository and relaunch the GUI. Local tracked configuration
+changes may require preserving/stashing them before pulling. Initialization
+options are checked with `--dry-run` before hardware access; outdated helpers
+produce an actionable rebuild error. An ADC test record is now acquired before
+the Hameg is connected/enabled. This record is discarded, and does not program
+ADC zero offsets. If it fails, the scan does not energize the DUT.
+
+Timeout messages include selected chips, DRDY selection, mapped channels, rate,
+sample count and the helper's captured output. This is a diagnostic improvement,
+not a guarantee that a disconnected module, bad serial link or overloaded stream
+can acquire successfully. Current updated PMOD helpers support rates through
+32000 S/s (above 8000 requires global chopping disabled, selected automatically
+by their initialization parser); high-rate reliability remains hardware-dependent.
+
+### Editing comments while running
+
+The Comments tab is editable during acquisition. Edits are saved immediately
+in `comments.txt` and `comments_history.json`, including UTC time, revision and
+last completed point. This remains active while a helper is waiting or blocked.
+Each completed CSV point gets a snapshot of the current text and its revision;
+prior rows are not rewritten. Final metadata contains the latest text/revision.
+The history also survives ordinary errors or stopping a scan. Edits made after
+the GUI marks the run stopped/completed are for the next run.

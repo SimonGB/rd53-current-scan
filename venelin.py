@@ -1,6 +1,7 @@
 """Finite acquisitions through SimonGB/pmod_adc's existing compiled helpers."""
 import json
 import math
+import os
 from pathlib import Path
 import re
 import signal
@@ -102,9 +103,13 @@ class Venelin:
         self.profiles=input_profiles(config)
         self.data=Path(data).expanduser().resolve()
         self.channels=channels
+        if not channels or len(channels)!=len(set(channels)) or any(not re.fullmatch(r'PMOD[1-6]_Ch[0-7]',c) for c in channels):
+            raise ValueError('ADC inputs must be unique physical PMOD channel IDs')
+        self.chip_mask=sum(1<<(p-1) for p in {int(c[4]) for c in channels})
+        self.drdy_chip=min(int(c[4])-1 for c in channels)
         self.rate=int(sample_rate)
-        if sample_rate!=self.rate or self.rate not in (250,500,1000,2000,4000,8000,16000,32000):
-            raise ValueError('Choose an ADC rate: 250, 500, 1000, 2000, 4000, 8000, 16000, 32000 S/s')
+        if sample_rate!=self.rate or self.rate not in (50,62,63,100,125,200,250,400,500,800,1000,1600,2000,3200,4000,6400,8000,16000,32000):
+            raise ValueError('Unsupported ADC rate; use a rate accepted by the rebuilt PMOD helpers')
         self.count=max(2,math.ceil(self.rate*capture_time))
         self.cancel=cancel; self.process=None
         self.sample_interval=1/self.rate
@@ -117,12 +122,15 @@ class Venelin:
         # File-backed logs avoid pipe deadlocks on verbose acquisition output.
         import tempfile
         with tempfile.TemporaryFile(mode='w+') as log:
-            self.process=subprocess.Popen([str(exe),*args],cwd=self.root,stdout=log,stderr=log)
+            self.process=subprocess.Popen([str(exe),*args],cwd=self.root,stdout=log,stderr=log,start_new_session=True)
             deadline=time.monotonic()+timeout
             try:
                 while self.process.poll() is None:
                     if self.cancel.is_set(): raise InterruptedError('Stop requested')
-                    if time.monotonic()>deadline: raise TimeoutError(f'{name} timed out')
+                    if time.monotonic()>deadline:
+                        log.flush();log.seek(0)
+                        diagnostics=log.read()[-6000:]
+                        raise TimeoutError(f'{name} timed out after {timeout:g} s; chip mask={hex(self.chip_mask)}, DRDY ADC={self.drdy_chip}, channels={self.channels}, rate={self.rate} S/s, samples={self.count}. Helper output:\n{diagnostics or "(no output)"}')
                     time.sleep(.02)
                 if self.process.returncode:
                     log.seek(0)
@@ -132,12 +140,20 @@ class Venelin:
                     self.process.send_signal(signal.SIGINT)
                     try:self.process.wait(timeout=3)
                     except subprocess.TimeoutExpired:
-                        self.process.kill();self.process.wait(timeout=3)
+                        os.killpg(self.process.pid,signal.SIGKILL);self.process.wait(timeout=3)
                 self.process=None
 
     def connect(self):
         # Normal initialization only; never zero-calibrate live signals.
-        self.command('pm_adcs_quick_ini',['--sample-rate',str(self.rate)],30)
+        args=['--sample-rate',str(self.rate),'--chip-mask',hex(self.chip_mask),
+              '--chip-select',str(self.drdy_chip),'--bits',str(next(iter(self.profiles.values()))['bits'])]
+        try:self.command('pm_adcs_quick_ini',args+['--dry-run'],10)
+        except RuntimeError as e:
+            raise RuntimeError('PMOD initialization options rejected. Update pmod_adc and rebuild with bash scripts/build.sh. '+str(e)) from e
+        self.command('pm_adcs_quick_ini',args,30)
+
+    def preflight(self):
+        self.capture()
 
     def capture(self):
         old=self.data.stat() if self.data.exists() else None
@@ -159,4 +175,5 @@ class Venelin:
         if self.process is not None:
             self.process.send_signal(signal.SIGINT)
             self.process.wait(timeout=3)
+
 
