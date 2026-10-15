@@ -15,7 +15,9 @@ except ImportError:
 
 
 def input_profiles(path, input_setup=None):
-    with Path(path).open('rb') as f: config=tomllib.load(f)
+    if path:
+        with Path(path).open('rb') as f: config=tomllib.load(f)
+    else:config={}
     cal=config.get('Calibration',{})
     bits=int(cal.get('PrecisionBits',24))
     if bits not in (16,24): raise ValueError('PrecisionBits must be 16 or 24')
@@ -37,8 +39,8 @@ def input_profiles(path, input_setup=None):
                 raise ValueError('ADC spans/shunts must be positive and finite')
             profiles[f'PMOD{p}_Ch{ch}']={'kind':kind,'full_scale_volts':float(span),
                                         'shunt_ohms':float(shunt),'bits':bits}
-    setup=Path(input_setup) if input_setup else Path(path).parent/'gui_board_inputs.json'
-    if setup.exists():
+    setup=Path(input_setup) if input_setup else (Path(path).parent/'gui_board_inputs.json' if path else None)
+    if setup is not None and setup.exists():
         saved=json.loads(setup.read_text(encoding='utf-8'))
         expected=set(profiles)
         if not isinstance(saved,dict) or saved.get('version')!=1:
@@ -156,24 +158,34 @@ class Venelin:
         self.capture()
 
     def capture(self):
+        return self._capture_samples(self.count)
+
+    def capture_many(self, count):
+        if count<1:raise ValueError("Capture count must be positive")
+        values=self._capture_samples(self.count*count)
+        return [{c:v[i*self.count:(i+1)*self.count] for c,v in values.items()} for i in range(count)]
+
+    def _capture_samples(self, samples):
         old=self.data.stat() if self.data.exists() else None
         numbers=[(int(c[4])-1)*8+int(c[-1]) for c in self.channels]
         lo=sum(1<<n for n in numbers if n<32); hi=sum(1<<(n-32) for n in numbers if n>=32)
-        self.command('pm_adcs_startl',['--nsamples',str(self.count),
+        self.command('pm_adcs_startl',['--nsamples',str(samples),
             '--fadc-mask-0-31',hex(lo),'--fadc-mask-32-47',hex(hi),
             '--adc24-flag',hex(1 if next(iter(self.profiles.values()))['bits']==24 else 0),
-            '--temp-mask','0x0'],max(10,5*self.count/self.rate))
+            '--temp-mask','0x0'],max(10,5*samples/self.rate))
         now=self.data.stat()
         if old and (old.st_ino,old.st_mtime_ns,old.st_size)==(now.st_ino,now.st_mtime_ns,now.st_size):
             raise RuntimeError('ADC helper produced no fresh data; verify data path')
         values,self.last_ticks=decode_file(self.data,self.channels,self.profiles)
-        if any(len(v)<self.count for v in values.values()):
-            raise RuntimeError(f'ADC capture shorter than requested {self.count} samples')
+        if any(len(v)<samples for v in values.values()):
+            raise RuntimeError(f'ADC capture shorter than requested {samples} samples')
+        values={c:v[:samples] for c,v in values.items()}
         return values
 
     def close(self):
         if self.process is not None:
             self.process.send_signal(signal.SIGINT)
             self.process.wait(timeout=3)
+
 
 

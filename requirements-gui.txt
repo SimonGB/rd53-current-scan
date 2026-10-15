@@ -1,2 +1,4 @@
 -r requirements.txt
 PyQt6>=6.6
+
+PyMuPDF>=1.24

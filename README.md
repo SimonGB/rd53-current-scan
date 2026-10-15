@@ -341,3 +341,75 @@ Each completed CSV point gets a snapshot of the current text and its revision;
 prior rows are not rewritten. Final metadata contains the latest text/revision.
 The history also survives ordinary errors or stopping a scan. Edits made after
 the GUI marks the run stopped/completed are for the next run.
+
+
+## Faster setup for several RD53 boards
+
+![Multi-board GUI](assets/gui-five-boards.png)
+
+Select **Venelin**, then **Quick setup…**. Enter the total board count, select
+whether new boards copy the selected board's testpoints/photo or a standard
+Vref/Vout (optionally Vin) template, and list the PMOD modules actually installed.
+Automatic assignment proposes unused fitted dV inputs for voltage testpoints and
+I inputs for current testpoints. Existing boards and assignments are preserved;
+insufficient inputs produce an error without partly changing the setup.
+Review the resulting wiring table and physically connect those inputs before
+verifying wiring and starting a hardware scan. Auto-assignment does not switch
+probes or connections. Unknown/custom testpoint names default to voltage unless
+their profile has `"unit": "A"`; standard Iin/Iout/Iload/Ishunt names use current.
+
+**Board tools** also provides bulk Add boards, Duplicate selected, Auto-assign,
+Remove selected board, photo/PDF import and profile save/load. New boards inherit
+testpoints/photo; input assignments are never duplicated onto already-used inputs.
+Use **Include in scan** to temporarily exclude a board without deleting its
+configuration. This selection is honored by GUI and profile-based CLI scans.
+
+Click a testpoint marker, then **Remove testpoint**, to delete it and its input
+assignment on that board. Other boards remain unchanged. Double-click a mapping's
+input cell for a dropdown showing channel IDs and configured fitted types/units.
+The default wiring table and live plot show the selected board; enable **All
+wiring rows** or **Plot all boards** for comparison.
+
+### Photos, thesis figures and window sizing
+
+Photos retain their native aspect ratio and are centered with margins instead
+of stretched. Testpoint coordinates and click detection use the same image
+rectangle. Setup controls scroll on smaller screens; Start/Stop remain outside
+the scrolling area, and long readouts no longer impose a huge window width.
+
+The Zorn thesis source was verified from the FH Dortmund publications listing,
+but its OPUS PDF download returned a bot-verification page during this update.
+No thesis image has been bundled or substituted. Use **Board tools → Import
+thesis PDF figure…** with a locally downloaded copy of `Masterthesis_Zorn.pdf`.
+The importer presents embedded images, prioritizes pages mentioning test boards,
+and saves the selected figure locally with source filename/page metadata.
+Import it before duplicating a board to share the image. Marker positions remain
+unverified until matched to your actual PCB. The PDF import dependency is included
+in `requirements-gui.txt`; your original PDF is never modified or uploaded.
+
+Source: Jendrik Zorn, master's thesis, FH Dortmund, August 2019;
+[faculty listing](https://www.fh-dortmund.de/personen/Michael-Karagounis/index.php?loc=de-DE),
+[thesis](https://opus.bsz-bw.de/fhdo/files/3054/Masterthesis_Zorn.pdf).
+
+### Faster ADC acquisition and concurrent processing
+
+Venelin now collects one finite record per current point for **all mapped inputs
+at once**, then splits it into `--captures` consecutive equal-length windows.
+For 10 windows, the helper launch count falls from 10 to 1 per point. Total
+recorded signal duration stays approximately `captures × capture_time`; the
+settling delay also stays unchanged. The one-time acquisition preflight remains.
+
+`capture_std` now measures the spread of these consecutive window means for ADC
+runs; these are not independent restarted captures. Within-window RMS and pooled
+sample standard deviation retain their previous definitions. Pico still uses
+separate captures. Metadata records `acquisition_mode` so the distinction is clear.
+
+Signal statistics use a bounded two-worker pool. Raw-file compression can overlap
+the next current step's supply programming/settling; only one pending raw save is
+retained. The shared ADC/FPGA serial link still has a single owner. Starting one
+acquisition process per RD53 board would contend for that link. Redundant supply
+voltage readout before acquisition has been removed; current checks remain.
+
+`metadata.json` includes per-point acquisition/elapsed timing to diagnose remaining
+overhead on the bench. Five-board GUI simulation and helper-batching tests passed;
+no hardware speedup factor is claimed until measured on the actual setup.

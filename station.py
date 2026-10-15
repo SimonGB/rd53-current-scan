@@ -1,5 +1,6 @@
 """Mapped, multi-board measurements sharing one swept HMP channel."""
 import csv
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import math
@@ -10,6 +11,7 @@ import numpy as np
 from mapping import validate_profile, load_profile
 from scan import current_points, parser, SimSupply
 from run_comments import RunComments
+from board_setup import active_profile
 
 
 def summaries(waves):
@@ -71,7 +73,7 @@ def plot_mapped(rows,out):
 
 
 def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,notes=None):
-    profile=validate_profile(profile); cancel=cancel or threading.Event()
+    profile=validate_profile(active_profile(profile)); cancel=cancel or threading.Event()
     notes=notes or RunComments(getattr(args,'comments',''))
     points=current_points(args.start,args.stop,args.step)
     for name in ('voltage_limit','max_current','sample_rate','capture_time'):
@@ -106,6 +108,10 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
               'comments':getattr(args,'comments',''),'profile':profile,'simulation':args.simulate,'status':'initializing','completed_points':0}
     notes.bind(out)
     rows=[];armed=False;failure=None;errors=[]
+    processing=ThreadPoolExecutor(max_workers=2,thread_name_prefix='rd53-data')
+    pending_raw=None
+    metadata['acquisition_mode']='batched_contiguous_windows' if hasattr(reader,'capture_many') else 'separate_captures'
+    metadata['point_timings_s']=[]
     fields=['point','direction','timestamp_UTC','board','testpoint','input','unit','current_set_A',
             'current_measured_A','supply_voltage_V','current_tracking_ok','mean','capture_std',
             'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision']
@@ -125,23 +131,31 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
         with (out/'measurements.csv').open('w',newline='') as f:
             writer=csv.DictWriter(f,fields);writer.writeheader()
             for index,(direction,current) in enumerate(seq):
+                point_started=time.monotonic()
                 if cancel.is_set():raise InterruptedError('Stop requested')
                 supply.set_current_limit(current)
                 if cancel.wait(.02 if args.simulate else args.settle):raise InterruptedError('Stop requested')
-                before,_=supply.readback()
+                if pending_raw is not None:pending_raw.result();pending_raw=None
+                before=supply.number('MEAS:CURR?') if hasattr(supply,'number') else supply.readback()[0]
                 if not math.isfinite(before) or before>args.max_current+max(.0001,.02*args.max_current):
                     raise RuntimeError('Invalid or excessive supply current')
-                captures=[]
-                for _ in range(args.captures):
-                    if cancel.is_set():raise InterruptedError('Stop requested')
-                    captures.append(reader.capture())
+                capture_started=time.monotonic()
+                if hasattr(reader,'capture_many'):
+                    captures=reader.capture_many(args.captures)
+                else:
+                    captures=[]
+                    for _ in range(args.captures):
+                        if cancel.is_set():raise InterruptedError('Stop requested')
+                        captures.append(reader.capture())
+                capture_seconds=time.monotonic()-capture_started
                 after,voltage=supply.readback()
                 if not all(math.isfinite(v) for v in (after,voltage)) or after>args.max_current+max(.0001,.02*args.max_current):
                     raise RuntimeError('Invalid or excessive supply readback')
                 measured=(before+after)/2; timestamp=datetime.now(timezone.utc).isoformat();batch=[]
                 comment_text,comment_revision=notes.snapshot()
+                futures={m['channel']:processing.submit(summaries,[np.asarray(c[m['channel']],dtype=float) for c in captures]) for m in mappings}
                 for m in mappings:
-                    stats=summaries([np.asarray(c[m['channel']],dtype=float) for c in captures])
+                    stats=futures[m['channel']].result()
                     row=dict(point=index,direction=direction,timestamp_UTC=timestamp,board=m['board'],
                         testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],current_set_A=current,
                         current_measured_A=measured,supply_voltage_V=voltage,
@@ -150,7 +164,8 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                 writer.writerows(batch);f.flush();rows.extend(batch)
                 if args.save_waveforms:
                     arrays={f'{c}_capture{j}':v for j,cap in enumerate(captures) for c,v in cap.items()}
-                    np.savez_compressed(out/f'waveforms_{index:05d}.npz',sample_interval_s=reader.sample_interval,**arrays)
+                    pending_raw=processing.submit(np.savez_compressed,out/f'waveforms_{index:05d}.npz',sample_interval_s=reader.sample_interval,**arrays)
+                metadata['point_timings_s'].append(dict(point=index,acquisition=capture_seconds,total=time.monotonic()-point_started))
                 metadata['completed_points']+=1
                 notes.point_completed(index)
                 if on_point:on_point(batch)
@@ -166,6 +181,12 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
         for device in (supply,reader):
             try:device.close()
             except BaseException as e:errors.append(f'Close failed: {e}')
+        try:
+            if pending_raw is not None:pending_raw.result()
+        except BaseException as e:
+            metadata['raw_save_error']=str(e)
+            if failure is None:failure=e;metadata['status']='failed'
+        finally:processing.shutdown(wait=True)
         if errors:metadata['status']='shutdown_failed'
         metadata['shutdown_errors']=errors
         if rows:
@@ -189,4 +210,5 @@ if __name__=='__main__':
     try:run_mapped(a,load_profile(a.profile),stop)
     except (InterruptedError,KeyboardInterrupt):sys.exit(130)
     except Exception as e:print(f'ERROR: {e}',file=sys.stderr);sys.exit(1)
+
 
