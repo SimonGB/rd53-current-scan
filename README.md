@@ -546,3 +546,26 @@ and CSV endpoints, wrong-input rejection before supply connection, immediate
 stop with a required reason, persistence after shutdown, and abort before the
 first point. Hardware common-mode limits and wiring require verification on
 the actual setup.
+
+### Voltage-drop subplot and opening saved runs in the GUI
+
+**Show Vin − Vout subplot** adds a second panel to both sweep directions and their
+PDF/PNG exports. Each curve is the signed local input-minus-output voltage for
+one board, paired by acquired scan point and direction. Missing, ambiguous,
+non-voltage and cross-board connection measurements are excluded, without
+interpolation. The voltage drop is not a measurement of shunted current or power.
+Use matching local references for Vin and Vout. Uncertainties are not inferred
+from independent captures for this derived curve.
+
+Click **Open old measurements…** in the GUI header, then select `metadata.json`
+or `measurements.csv`. A separate window opens with blue up/down plots, a board
+filter, editable title/configuration/range, both visibility checkboxes, zoom/pan
+toolbars and **Export displayed plots…** for white PDF/PNG output. Plot changes
+update immediately; this viewer does not connect to instruments or replace live
+scan data, wiring or settings. Original CSV and metadata files remain unchanged.
+Exports ask before replacing existing sweep plot files.
+
+The voltage-drop checkbox defaults on for new and old runs. Its state is saved
+in new-run metadata; CLI options `--plot-hide-difference` (scan) and
+`--no-difference` (`sweep_plots.py`) hide the derived panel. If no valid Vin/Vout
+pairs are available in the displayed range, the extra panel is omitted.

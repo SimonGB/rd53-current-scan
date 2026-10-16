@@ -47,7 +47,7 @@ class SweepPlotTests(unittest.TestCase):
     def test_units_not_mixed(self):
         rows=self.rows()
         rows.append(dict(rows[0], unit='A', testpoint='Iin', mean=.001))
-        fig=Figure();draw_sweep(fig,rows,'up','Mixed measurements')
+        fig=Figure();draw_sweep(fig,rows,'up','Mixed measurements',show_difference=False)
         self.assertEqual([a.get_ylabel() for a in fig.axes], ['Voltage (V)', 'Current (A)'])
 
     def test_configuration_box_and_hide(self):
@@ -88,3 +88,30 @@ class SweepPlotTests(unittest.TestCase):
             with patch('sys.argv',['sweep_plots.py',str(directory),'--configuration','New wiring','--max-ma','100']), patch('sweep_plots.export_sweeps') as export:
                 main()
                 self.assertEqual(export.call_args.args[2:],('My run',100,'New wiring'))
+
+    def test_voltage_drop_point_matching_and_ambiguity(self):
+        from sweep_plots import voltage_drops
+        def row(tp, point, mean, **extra):
+            return dict(board='b1',testpoint=tp,unit='V',direction='up',
+                        current_measured_A=.01,point=point,mean=mean,**extra)
+        rows=[row('Vin',0,2.0),row('Vout',0,1.8),
+              row('Vin',1,1.7),row('Vout',1,1.8),
+              row('Vin',2,2.0),row('Vout',3,1.8)]
+        drops=voltage_drops(rows)
+        self.assertEqual(len(drops),2)
+        self.assertAlmostEqual(drops[0]['mean'],.2)
+        self.assertAlmostEqual(drops[1]['mean'],-.1)
+        self.assertEqual(voltage_drops(rows[:2]+[row('V_in',0,2.1)]),[])
+        self.assertEqual(voltage_drops([rows[0],dict(rows[1],unit='A')]),[])
+        self.assertEqual(voltage_drops([rows[0],dict(rows[1],direction='down')]),[])
+        self.assertEqual(voltage_drops([rows[0],dict(rows[1],negative_endpoint='Global/GND')]),[])
+        self.assertEqual(voltage_drops([rows[0],dict(rows[1],current_measured_A=.02)]),[])
+
+    def test_difference_subplot_and_toggle(self):
+        from sweep_plots import voltage_drops
+        fig=Figure();draw_sweep(fig,self.rows(),'up','Run')
+        self.assertEqual(len(fig.axes),2)
+        self.assertEqual(len(fig.axes[1].lines),5)
+        self.assertTrue(fig.axes[1].get_shared_x_axes().joined(*fig.axes))
+        draw_sweep(fig,self.rows(),'up','Run',show_difference=False)
+        self.assertEqual(len(fig.axes),1)
