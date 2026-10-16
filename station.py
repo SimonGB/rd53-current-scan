@@ -78,6 +78,8 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
     profile=validate_profile(active_profile(profile)); cancel=cancel or threading.Event()
     notes=notes or RunComments(getattr(args,'comments',''))
     points=current_points(args.start,args.stop,args.step)
+    plot_max=getattr(args,'plot_max_ma',100)
+    if not math.isfinite(plot_max) or plot_max<=0:raise ValueError('Invalid plot maximum')
     for name in ('voltage_limit','max_current','sample_rate','capture_time'):
         if not math.isfinite(getattr(args,name)) or getattr(args,name)<=0:raise ValueError(f'Invalid {name}')
     if args.stop>args.max_current or args.max_current>10 or args.voltage_limit>32:
@@ -192,7 +194,11 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
         if errors:metadata['status']='shutdown_failed'
         metadata['shutdown_errors']=errors
         if rows:
-            try:plot_mapped(rows,out)
+            try:
+                plot_mapped(rows,out)
+                from sweep_plots import export_sweeps
+                export_sweeps(rows,out,getattr(args,'plot_title','5 RD53b in parallel'),
+                              getattr(args,'plot_max_ma',100))
             except Exception as e:metadata['plot_error']=str(e)
         notes.finalize(metadata)
         print(f'Results: {out}',flush=True)

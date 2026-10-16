@@ -35,6 +35,6 @@ class OverviewTests(unittest.TestCase):
         w.running=True;w.estimate_state='running';w.update_eta();self.assertEqual(w.eta.text(),'Finalizing…')
         w.running=False
         w.rows=[dict(board='board1',testpoint='Vout',unit='V',direction=d,current_measured_A=.01,mean=1.8,capture_std=.001) for d in ('up','down')]
-        w.redraw();up,down=w.figure.axes[0].lines
-        self.assertEqual(up.get_color(),down.get_color());self.assertEqual(down.get_linestyle(),':')
-        self.assertNotEqual(up.get_marker(),down.get_marker());w.close()
+        w.redraw();up=w.figure.axes[0].lines[0];down=w.down_figure.axes[0].lines[0]
+        self.assertEqual(up.get_color(),down.get_color());self.assertEqual(down.get_linestyle(),'-')
+        self.assertEqual(up.get_marker(),down.get_marker());w.close()

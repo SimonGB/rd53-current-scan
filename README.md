@@ -450,3 +450,24 @@ without switching views, input conflict prevention, time-estimate refinement and
 matching export styles. A simulated five-board, 20-point scan verified card
 readouts, editing interlocks and final ETA state. No instrument protocol or
 hardware timing settings changed in this GUI update.
+
+### Automatic up/down comparison plots
+
+The GUI has separate **Up sweep** and **Down sweep** live tabs. Each board uses
+one consistent color: Vin is dotted with open circles, Vout is solid with open
+squares in both directions. The legend is inside the plot, with Vin and Vout
+next to each other for each board. Other testpoints remain visible; current
+and voltage channels use separate axes. The “Plot all boards” control applies
+to both live tabs; saved plots always include all measured boards.
+
+After a mapped scan, the run folder automatically receives
+`mapped_voltages_up.pdf/.png` and, when a downward sweep was acquired,
+`mapped_voltages_down.pdf/.png`, in addition to the existing overview plots.
+The **Plot title** and **Plot maximum [mA]** fields default to
+“5 RD53b in parallel” and 100 mA (the lower plot limit is 0 mA).
+Change the title for other wiring arrangements. These display limits do not
+change the acquisition or remove any saved samples. Both settings are recorded
+in metadata; CLI equivalents are `--plot-title` and `--plot-max-ma`.
+
+Exports use serif fonts, inward ticks, a dashed grid and 300 dpi PNG output.
+They use Matplotlib text rendering and require no external LaTeX installation.

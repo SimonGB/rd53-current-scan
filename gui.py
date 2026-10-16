@@ -27,7 +27,7 @@ from scan import parser
 from station import run_mapped
 from run_comments import RunComments
 from board_overview import BoardOverview
-from plot_style import signal_colors,sweep_style
+from sweep_plots import draw_sweep
 from progress_estimate import ProgressEstimate,duration
 from board_setup import add_boards,auto_assign,delete_testpoint,active_profile
 
@@ -125,6 +125,9 @@ class Window(QMainWindow):
             self.fields[name]=box;form.addRow(label,box)
         self.captures=QSpinBox();self.captures.setRange(1,10000);self.captures.setValue(10);form.addRow('Captures per point',self.captures)
         self.name=QLineEdit('board1');form.addRow('Run name',self.name)
+        self.plot_title=QLineEdit('5 RD53b in parallel');form.addRow('Plot title',self.plot_title)
+        self.plot_max=QDoubleSpinBox();self.plot_max.setRange(.001,10000);self.plot_max.setValue(100);form.addRow('Plot maximum [mA]',self.plot_max)
+        self.plot_title.textChanged.connect(self.redraw);self.plot_max.valueChanged.connect(self.redraw)
         notespage=QWidget();noteslayout=QVBoxLayout(notespage)
         noteslabel=QLabel('Edit comments during the scan — saved immediately with timestamped revisions.');noteslabel.setWordWrap(True);noteslayout.addWidget(noteslabel)
         self.comments=QPlainTextEdit();self.comments.setPlaceholderText('Board ID, wiring changes, temperature, observations, unusual behaviour…')
@@ -171,10 +174,13 @@ class Window(QMainWindow):
         for title,fn in [('Add assignment',self.add_mapping),('Remove selected',self.remove_mapping)]:
             btn=QPushButton(title);btn.clicked.connect(fn);mapbuttons.addWidget(btn)
         self.showall=QCheckBox('All wiring rows');self.showall.toggled.connect(self.refresh_board);mapbuttons.addWidget(self.showall)
-        self.plotall=QCheckBox('Plot all boards');self.plotall.toggled.connect(self.redraw);mapbuttons.addWidget(self.plotall)
+        self.plotall=QCheckBox('Plot all boards');self.plotall.setChecked(True);self.plotall.toggled.connect(self.redraw);mapbuttons.addWidget(self.plotall)
         mapbuttons.addStretch();rl.addLayout(mapbuttons)
         rtabs=QTabWidget();rl.addWidget(rtabs,1)
-        self.figure=Figure(figsize=(8,3),facecolor='#101f2e');self.canvas=FigureCanvasQTAgg(self.figure);self.canvas.setMinimumSize(200,170);self.canvas.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Expanding);rtabs.addTab(self.canvas,'Live measurements')
+        self.figure=Figure(figsize=(7,5),facecolor='white');self.canvas=FigureCanvasQTAgg(self.figure)
+        self.down_figure=Figure(figsize=(7,5),facecolor='white');self.down_canvas=FigureCanvasQTAgg(self.down_figure)
+        for canvas,label in [(self.canvas,'Up sweep'),(self.down_canvas,'Down sweep')]:
+            canvas.setMinimumSize(200,170);canvas.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Expanding);rtabs.addTab(canvas,label)
         self.log=QPlainTextEdit();self.log.setReadOnly(True);rtabs.addTab(self.log,'Run log')
         self.readout=QLabel('No measurements yet');self.readout.setWordWrap(True);self.readout.setMaximumHeight(65);self.readout.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred);rl.addWidget(self.readout)
         self.backend.currentTextChanged.connect(self.change_backend);self.boardselect.currentTextChanged.connect(self.refresh_board)
@@ -477,7 +483,7 @@ class Window(QMainWindow):
             argv=['--start',str(self.fields['start'].value()/1000),'--stop',str(self.fields['stop'].value()/1000),
                   '--step',str(self.fields['step'].value()/1000),'--max-current',str(self.fields['max_current'].value()/1000),
                   '--voltage-limit',str(self.fields['voltage_limit'].value())]
-            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.comments=self.comments.toPlainText()
+            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.plot_title=self.plot_title.text();args.plot_max_ma=self.plot_max.value();args.comments=self.comments.toPlainText()
             for n in ('settle','capture_time','sample_rate'):setattr(args,n,self.fields[n].value())
             args.captures=self.captures.value();args.reverse=self.reverse.isChecked();args.simulate=self.sim.isChecked();args.save_waveforms=self.raw.isChecked()
             from scan import current_points
@@ -512,23 +518,12 @@ class Window(QMainWindow):
         self.estimate_state='done' if ok else 'stopped';self.update_eta();self.sync_overview()
         self.readout.setText(text);self.readout.setToolTip(text)
     def redraw(self):
-        self.figure.clear()
-        colors=signal_colors(self.rows)
+        if not hasattr(self,'canvas'):
+            return
         visible=self.rows if self.plotall.isChecked() else [r for r in self.rows if r['board']==self.boardselect.currentText()]
-        units=list(dict.fromkeys(r['unit'] for r in visible)) or ['V']
-        for index,unit in enumerate(units):
-            ax=self.figure.add_subplot(len(units),1,index+1);ax.set_facecolor('#101f2e')
-            targets=list(dict.fromkeys((r['board'],r['testpoint'],r['direction']) for r in visible if r['unit']==unit))
-            for board,tp,direction in targets:
-                rr=[r for r in visible if (r['board'],r['testpoint'],r['unit'],r['direction'])==(board,tp,unit,direction)]
-                ax.errorbar([r['current_measured_A']*1000 for r in rr],[r['mean'] for r in rr],
-                    yerr=[r['capture_std'] or 0 for r in rr],markersize=3,label=f'{board} {tp} {direction}',
-                    **sweep_style(direction,colors[(board,tp,unit)]))
-            ax.set_xlabel('Measured supply current [mA]',color='#c6d8e9')
-            ax.set_ylabel('Current [A]' if unit=='A' else 'Voltage [V]',color='#c6d8e9')
-            ax.tick_params(colors='#c6d8e9');ax.grid(alpha=.15)
-            if targets:ax.legend(fontsize=7,ncol=2 if len(targets)>4 else 1,loc='best')
-        self.figure.tight_layout();self.canvas.draw_idle()
+        for direction,figure,canvas in [('up',self.figure,self.canvas),('down',self.down_figure,self.down_canvas)]:
+            draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_max.value(),color_rows=self.rows)
+            canvas.draw_idle()
     def closeEvent(self,event):
         if self.worker and self.worker.isRunning():
             self.stop();self.log.appendPlainText('Close deferred until acquisition stops and supply is disabled.');event.ignore()
