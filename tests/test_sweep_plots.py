@@ -59,3 +59,32 @@ class SweepPlotTests(unittest.TestCase):
             self.assertIsNotNone(label.get_bbox_patch())
             draw_sweep(fig,self.rows(),direction,'5 RD53b',configuration='')
             self.assertFalse(any(t.get_text()==text for t in fig.axes[0].texts))
+
+    def test_dark_live_style_leaves_exports_white(self):
+        from matplotlib.colors import to_hex
+        fig=Figure()
+        draw_sweep(fig,self.rows(),'up','Live',configuration='Test',dark=True)
+        self.assertEqual(to_hex(fig.axes[0].get_facecolor()), '#101f2e')
+        self.assertEqual(to_hex(fig.axes[0].xaxis.label.get_color()), '#c6d8e9')
+        draw_sweep(fig,self.rows(),'up','Export')
+        self.assertEqual(to_hex(fig.axes[0].get_facecolor()), '#ffffff')
+
+    def test_replot_reads_saved_settings_and_overrides_visibility(self):
+        import csv
+        import json
+        from unittest.mock import patch
+        from sweep_plots import main
+        with tempfile.TemporaryDirectory() as d:
+            directory=Path(d)
+            metadata=directory/'metadata.json'
+            metadata.write_text(json.dumps({'settings':dict(plot_title='My run',
+                plot_configuration='Saved wiring',plot_hide_configuration=True,plot_max_ma=80)}))
+            with (directory/'measurements.csv').open('w',newline='') as f:
+                writer=csv.DictWriter(f,fieldnames=list(self.rows()[0]))
+                writer.writeheader();writer.writerows(self.rows())
+            with patch('sys.argv',['sweep_plots.py',str(metadata)]), patch('sweep_plots.export_sweeps') as export:
+                main()
+                self.assertEqual(export.call_args.args[2:],('My run',80,''))
+            with patch('sys.argv',['sweep_plots.py',str(directory),'--configuration','New wiring','--max-ma','100']), patch('sweep_plots.export_sweeps') as export:
+                main()
+                self.assertEqual(export.call_args.args[2:],('My run',100,'New wiring'))

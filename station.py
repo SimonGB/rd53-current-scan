@@ -199,7 +199,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                 from sweep_plots import export_sweeps
                 export_sweeps(rows,out,getattr(args,'plot_title','5 RD53b in 3 serial domains'),
                               getattr(args,'plot_max_ma',100),
-                              configuration=getattr(args,'plot_configuration',''))
+                              configuration='' if getattr(args,'plot_hide_configuration',False) else getattr(args,'plot_configuration',''))
             except Exception as e:metadata['plot_error']=str(e)
         notes.finalize(metadata)
         print(f'Results: {out}',flush=True)

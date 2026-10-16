@@ -29,7 +29,7 @@ def signal_kind(name):
     return name
 
 
-def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, configuration=""):
+def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, configuration="", dark=False):
     """One figure per direction; separate axes for different physical units."""
     figure.clear()
     boards = list(dict.fromkeys(r['board'] for r in (color_rows or rows)))
@@ -39,7 +39,18 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                and math.isfinite(r['mean'])
                and 0 <= r['current_measured_A'] * 1000 <= maximum]
     units = list(dict.fromkeys(r['unit'] for r in visible)) or ['V']
-    with rc_context(STYLE):
+    theme = dict(STYLE)
+    if dark:
+        theme.update({'font.family': 'sans-serif', 'axes.facecolor': '#101f2e',
+                      'axes.edgecolor': '#91a6bb', 'axes.labelcolor': '#c6d8e9',
+                      'text.color': '#e2f0ff', 'xtick.color': '#c6d8e9',
+                      'ytick.color': '#c6d8e9', 'grid.color': '#91a6bb',
+                      'grid.alpha': .2, 'legend.facecolor': '#172b3d',
+                      'legend.edgecolor': '#627b91'})
+        live_palette = ['#56B4E9', '#F0E442', '#4DDBAA', '#CC99DD', '#FF9866']
+        colors = {b: live_palette[i % len(live_palette)] for i, b in enumerate(boards)}
+    figure.set_facecolor('#101f2e' if dark else 'white')
+    with rc_context(theme):
         for index, unit in enumerate(units):
             ax = figure.add_subplot(len(units), 1, index + 1)
             handles = {}
@@ -80,8 +91,8 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                 ax.margins(y=.15)
                 ax.text(.03, .97, configuration, transform=ax.transAxes,
                         ha='left', va='top', fontsize=9,
-                        bbox=dict(boxstyle='round,pad=.4', facecolor='white',
-                                  edgecolor='#888888', alpha=.92))
+                        bbox=dict(boxstyle='round,pad=.4', facecolor='#172b3d' if dark else 'white',
+                                  edgecolor='#627b91' if dark else '#888888', alpha=.92))
             ax.set_title(title, fontsize=14, pad=10)
             ax.set_title(f'{direction.capitalize()} sweep', loc='right', fontsize=11, pad=10)
             ax.set_xlabel('Measured supply current (mA)')
@@ -109,3 +120,49 @@ def export_sweeps(rows, directory, title='5 RD53b in 3 serial domains', maximum=
             for extension in ('pdf', 'png'):
                 figure.savefig(directory / f'mapped_voltages_{direction}.{extension}',
                                dpi=300, bbox_inches='tight')
+
+
+def main():
+    """Regenerate plots using the run's saved settings and measurement CSV."""
+    import argparse
+    import csv
+    import json
+    from pathlib import Path
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument('run', type=Path, help='Run folder, metadata.json, or measurements.csv')
+    parser.add_argument('--title', help='Override saved plot title')
+    parser.add_argument('--configuration', help='Override configuration box text')
+    parser.add_argument('--no-configuration', action='store_true', help='Hide the configuration box')
+    parser.add_argument('--max-ma', type=float, help='Upper plot limit in mA')
+    parser.add_argument('--output', type=Path, help='Output folder; default is the run folder')
+    args = parser.parse_args()
+    directory = args.run if args.run.is_dir() else args.run.parent
+    metadata_path = directory / 'metadata.json'
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    settings = metadata.get('settings', {})
+    title = args.title if args.title is not None else settings.get('plot_title', 'RD53b current scan')
+    maximum = args.max_ma if args.max_ma is not None else float(settings.get('plot_max_ma', 100))
+    configuration = (args.configuration if args.configuration is not None
+                     else settings.get('plot_configuration', ''))
+    if args.no_configuration or (args.configuration is None and settings.get('plot_hide_configuration', False)):
+        configuration = ''
+    if not math.isfinite(maximum) or maximum <= 0:
+        parser.error('--max-ma must be a positive finite number')
+    csv_path = args.run if args.run.suffix.lower() == '.csv' else directory / 'measurements.csv'
+    rows = []
+    with csv_path.open(newline='') as handle:
+        for row in csv.DictReader(handle):
+            row['current_measured_A'] = float(row['current_measured_A'])
+            row['mean'] = float(row['mean'])
+            row['point'] = int(row['point'])
+            rows.append(row)
+    if not rows:
+        parser.error('No measurement records in CSV')
+    output = args.output or directory
+    output.mkdir(parents=True, exist_ok=True)
+    export_sweeps(rows, output, title, maximum, configuration)
+    print(f'Saved up/down PDF and PNG plots in {output}')
+
+
+if __name__ == '__main__':
+    main()
