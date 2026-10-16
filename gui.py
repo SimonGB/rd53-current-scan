@@ -125,7 +125,10 @@ class Window(QMainWindow):
             self.fields[name]=box;form.addRow(label,box)
         self.captures=QSpinBox();self.captures.setRange(1,10000);self.captures.setValue(10);form.addRow('Captures per point',self.captures)
         self.name=QLineEdit('board1');form.addRow('Run name',self.name)
-        self.plot_title=QLineEdit('5 RD53b in parallel');form.addRow('Plot title',self.plot_title)
+        self.plot_title=QLineEdit('5 RD53b in 3 serial domains');form.addRow('Plot title',self.plot_title)
+        self.plot_configuration=QLineEdit('3 serial domains: Boards (1 & 2) → (3 & 4) → 5');form.addRow('Configuration',self.plot_configuration)
+        self.plot_configuration.setToolTip('Shown on both plots and saved in run metadata; leave blank to hide.')
+        self.plot_configuration.textChanged.connect(self.redraw)
         self.plot_max=QDoubleSpinBox();self.plot_max.setRange(.001,10000);self.plot_max.setValue(100);form.addRow('Plot maximum [mA]',self.plot_max)
         self.plot_title.textChanged.connect(self.redraw);self.plot_max.valueChanged.connect(self.redraw)
         notespage=QWidget();noteslayout=QVBoxLayout(notespage)
@@ -483,7 +486,7 @@ class Window(QMainWindow):
             argv=['--start',str(self.fields['start'].value()/1000),'--stop',str(self.fields['stop'].value()/1000),
                   '--step',str(self.fields['step'].value()/1000),'--max-current',str(self.fields['max_current'].value()/1000),
                   '--voltage-limit',str(self.fields['voltage_limit'].value())]
-            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.plot_title=self.plot_title.text();args.plot_max_ma=self.plot_max.value();args.comments=self.comments.toPlainText()
+            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.plot_title=self.plot_title.text();args.plot_configuration=self.plot_configuration.text();args.plot_max_ma=self.plot_max.value();args.comments=self.comments.toPlainText()
             for n in ('settle','capture_time','sample_rate'):setattr(args,n,self.fields[n].value())
             args.captures=self.captures.value();args.reverse=self.reverse.isChecked();args.simulate=self.sim.isChecked();args.save_waveforms=self.raw.isChecked()
             from scan import current_points
@@ -522,7 +525,7 @@ class Window(QMainWindow):
             return
         visible=self.rows if self.plotall.isChecked() else [r for r in self.rows if r['board']==self.boardselect.currentText()]
         for direction,figure,canvas in [('up',self.figure,self.canvas),('down',self.down_figure,self.down_canvas)]:
-            draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_max.value(),color_rows=self.rows)
+            draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_max.value(),color_rows=self.rows,configuration=self.plot_configuration.text())
             canvas.draw_idle()
     def closeEvent(self,event):
         if self.worker and self.worker.isRunning():

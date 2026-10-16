@@ -49,3 +49,13 @@ class SweepPlotTests(unittest.TestCase):
         rows.append(dict(rows[0], unit='A', testpoint='Iin', mean=.001))
         fig=Figure();draw_sweep(fig,rows,'up','Mixed measurements')
         self.assertEqual([a.get_ylabel() for a in fig.axes], ['Voltage (V)', 'Current (A)'])
+
+    def test_configuration_box_and_hide(self):
+        text = '3 serial domains: Boards (1 & 2) → (3 & 4) → 5'
+        for direction in ('up', 'down'):
+            fig=Figure()
+            draw_sweep(fig,self.rows(),direction,'5 RD53b',configuration=text)
+            label=next(t for t in fig.axes[0].texts if t.get_text()==text)
+            self.assertIsNotNone(label.get_bbox_patch())
+            draw_sweep(fig,self.rows(),direction,'5 RD53b',configuration='')
+            self.assertFalse(any(t.get_text()==text for t in fig.axes[0].texts))

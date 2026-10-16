@@ -29,7 +29,7 @@ def signal_kind(name):
     return name
 
 
-def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None):
+def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, configuration=""):
     """One figure per direction; separate axes for different physical units."""
     figure.clear()
     boards = list(dict.fromkeys(r['board'] for r in (color_rows or rows)))
@@ -76,6 +76,12 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None):
                 ax.legend(ordered, [h.get_label() for h in ordered], ncol=2,
                           fontsize=9, loc='best', columnspacing=1.5,
                           handlelength=2.5, framealpha=.9)
+            if configuration.strip():
+                ax.margins(y=.15)
+                ax.text(.03, .97, configuration, transform=ax.transAxes,
+                        ha='left', va='top', fontsize=9,
+                        bbox=dict(boxstyle='round,pad=.4', facecolor='white',
+                                  edgecolor='#888888', alpha=.92))
             ax.set_title(title, fontsize=14, pad=10)
             ax.set_title(f'{direction.capitalize()} sweep', loc='right', fontsize=11, pad=10)
             ax.set_xlabel('Measured supply current (mA)')
@@ -89,7 +95,7 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None):
         figure.tight_layout()
 
 
-def export_sweeps(rows, directory, title='5 RD53b in parallel', maximum=100):
+def export_sweeps(rows, directory, title='5 RD53b in 3 serial domains', maximum=100, configuration=''):
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     for direction in ('up', 'down'):
@@ -99,7 +105,7 @@ def export_sweeps(rows, directory, title='5 RD53b in parallel', maximum=100):
             units = set(r['unit'] for r in rows if r['direction'] == direction)
             figure = Figure(figsize=(7, 5 * max(1, len(units))), facecolor='white')
             FigureCanvasAgg(figure)
-            draw_sweep(figure, rows, direction, title, maximum)
+            draw_sweep(figure, rows, direction, title, maximum, configuration=configuration)
             for extension in ('pdf', 'png'):
                 figure.savefig(directory / f'mapped_voltages_{direction}.{extension}',
                                dpi=300, bbox_inches='tight')

@@ -471,3 +471,10 @@ in metadata; CLI equivalents are `--plot-title` and `--plot-max-ma`.
 
 Exports use serif fonts, inward ticks, a dashed grid and 300 dpi PNG output.
 They use Matplotlib text rendering and require no external LaTeX installation.
+
+The editable **Configuration** field adds a small boxed note to both live and
+exported sweep plots. Its current default is
+“3 serial domains: Boards (1 & 2) → (3 & 4) → 5”; clear the field to hide it.
+The default title is now “5 RD53b in 3 serial domains”. Set both fields to match
+the actual wiring for each run. Configuration text is saved in metadata and is
+also available via `--plot-configuration`.
