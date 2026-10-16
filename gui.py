@@ -30,6 +30,14 @@ from board_overview import BoardOverview
 from sweep_plots import draw_sweep
 from progress_estimate import ProgressEstimate,duration
 from board_setup import add_boards,auto_assign,delete_testpoint,active_profile
+from connections import endpoints,endpoint_label,add_connection,connection_points,prune_connections
+
+
+class AbortReasonDialog(QDialog):
+    """Cannot dismiss a user abort without recording a non-empty reason."""
+    def reject(self):pass
+
+    def closeEvent(self,event):event.ignore()
 
 
 class Worker(QThread):
@@ -177,7 +185,7 @@ class Window(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);self.table.setMaximumHeight(170);self.table.setMinimumHeight(110);rl.addWidget(self.table)
         self.table.setItemDelegateForColumn(2,ChannelDelegate(self))
         mapbuttons=QHBoxLayout()
-        for title,fn in [('Add assignment',self.add_mapping),('Remove selected',self.remove_mapping)]:
+        for title,fn in [('Add assignment',self.add_mapping),('Add connection…',self.add_connection_dialog),('Remove selected',self.remove_mapping)]:
             btn=QPushButton(title);btn.clicked.connect(fn);mapbuttons.addWidget(btn)
         self.showall=QCheckBox('All wiring rows');self.showall.toggled.connect(self.refresh_board);mapbuttons.addWidget(self.showall)
         self.plotall=QCheckBox('Plot all boards');self.plotall.setChecked(True);self.plotall.toggled.connect(self.redraw);mapbuttons.addWidget(self.plotall)
@@ -212,6 +220,9 @@ class Window(QMainWindow):
 
     def assign_from_card(self,board,point,channel):
         if self.running:return
+        if channel and (board,point) in connection_points(self.profile):
+            if self.backend.currentText()!='venelin' or self.fitted_inputs()[channel]['kind']!='dV':
+                QMessageBox.warning(self,'Differential input required','Use an unused dV input for a connection measurement.');self.sync_overview();return
         mappings=self.read_mapping()
         if channel and any(m['channel']==channel and (m['board'],m['testpoint'])!=(board,point) for m in mappings):
             QMessageBox.warning(self,'Input already assigned','Choose an unused input, or clear its existing assignment first.');self.sync_overview();return
@@ -391,6 +402,7 @@ class Window(QMainWindow):
         target=self.boardselect.currentText();self.profile['mappings']=self.read_mapping()
         self.profile['boards']=[b for b in self.profile['boards'] if b['id']!=target]
         self.profile['mappings']=[m for m in self.profile['mappings'] if m['board']!=target]
+        prune_connections(self.profile)
         self.boardselect.setCurrentText(self.profile['boards'][0]['id']);self.rebuild();self.verified.setChecked(False)
 
     def remove_testpoint(self):
@@ -433,14 +445,43 @@ class Window(QMainWindow):
         path,_=QFileDialog.getOpenFileName(self,'Board photograph','','Images (*.png *.jpg *.jpeg)')
         if path:self.view.board['image']=str(Path(path).resolve());self.view.update()
     def place_point(self,x,y):
+        if self.view.board.get('kind')=='connections':return
         if self.running:return
         name,ok=QInputDialog.getText(self,'Testpoint','Testpoint name (existing name moves its marker):')
         if ok and name.strip():
             point=next((p for p in self.view.board['testpoints'] if p['name']==name.strip()),None)
             if point is None:point={'name':name.strip()};self.view.board['testpoints'].append(point)
             point.update(x=x,y=y);self.view.update()
+    def add_connection_dialog(self):
+        if self.running:return
+        if self.backend.currentText()!='venelin':
+            QMessageBox.information(self,'Differential input required','Select Venelin / ADC to measure between two nodes. Pico channel grounds are shared.');return
+        try:
+            fitted=self.fitted_inputs();used={m['channel'] for m in self.read_mapping()}
+            choices=[(c,label) for c,label in self.input_choices() if c not in used and fitted[c]['kind']=='dV']
+            if not choices:raise ValueError('No unused dV input. Free an input or select another installed PMOD.')
+        except Exception as e:QMessageBox.warning(self,'Connection setup',str(e));return
+        dialog=QDialog(self);dialog.setWindowTitle('Measure between two nodes');form=QFormLayout(dialog)
+        positive=QComboBox();negative=QComboBox();channel=QComboBox()
+        for endpoint in endpoints(self.profile):
+            positive.addItem(endpoint_label(endpoint),endpoint);negative.addItem(endpoint_label(endpoint),endpoint)
+        positive.setCurrentIndex(1 if positive.count()>1 else 0)
+        for c,label in choices:channel.addItem(label,c)
+        form.addRow('Positive (+) endpoint',positive);form.addRow('Negative (−) endpoint',negative);form.addRow('Physical dV input',channel)
+        note=QLabel('Records V(+) − V(−). Wire the two endpoints to this differential input.\nGlobal GND is the reference node you choose in your setup.\nVerify both input pins are within the ADC common-mode and differential limits.\nSoftware does not switch wiring or isolate grounds.');note.setWordWrap(True);form.addRow(note)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);form.addRow(buttons)
+        buttons.rejected.connect(dialog.reject)
+        def save():
+            try:
+                profile=copy.deepcopy(self.profile);profile['mappings']=self.read_mapping()
+                self.profile=add_connection(profile,positive.currentData(),negative.currentData(),channel.currentData())
+                self.verified.setChecked(False);self.rebuild();dialog.accept()
+            except Exception as e:QMessageBox.warning(dialog,'Connection setup',str(e))
+        buttons.accepted.connect(save);dialog.exec()
+
     def add_mapping(self):
         if self.running:return
+        if self.view.board.get('kind')=='connections':self.add_connection_dialog();return
         b=self.view.board;points=[p['name'] for p in b['testpoints']]
         name,ok=QInputDialog.getItem(self,'Assign input','Testpoint:',points,0,False)
         if not ok:return
@@ -482,7 +523,7 @@ class Window(QMainWindow):
             self.verified.setChecked(False);self.rebuild()
         except Exception as e:QMessageBox.warning(self,'Profile error',str(e))
     def start(self):
-        if self.running:return
+        if self.running or getattr(self,'abort_dialog',None):return
         try:
             p=validate_profile(active_profile(self.snapshot()))
             if not self.sim.isChecked() and not self.verified.isChecked():raise ValueError('Check physical wiring and safe limits before a hardware scan')
@@ -506,10 +547,30 @@ class Window(QMainWindow):
             try:self.worker.notes.update(self.comments.toPlainText())
             except Exception as e:
                 self.log.appendPlainText(f'Could not save comments: {e}')
-                self.stop()
+                self.stop(reason=f'Automatic stop: could not save comments: {e}')
 
-    def stop(self):
-        if self.worker:self.worker.stop.set();self.state.setText('STOPPING · waiting for safe shutdown');self.stopbtn.setEnabled(False);self.estimate_state='stopping';self.update_eta()
+    def stop(self,checked=False,reason=None):
+        if not self.worker or not self.running:return
+        if self.worker.stop.is_set():return
+        # Never delay shutdown while a user is writing a reason.
+        self.worker.stop.set();self.state.setText('STOPPING · waiting for safe shutdown');self.stopbtn.setEnabled(False);self.estimate_state='stopping';self.update_eta()
+        try:
+            self.worker.notes.request_abort('automatic' if reason else 'user')
+            if reason:self.worker.notes.abort_reason(reason)
+        except Exception as e:self.log.appendPlainText(f'Could not persist abort information: {e}')
+        if reason:return
+        dialog=AbortReasonDialog(self);self.abort_dialog=dialog;dialog.setWindowTitle('Reason for aborting this scan')
+        form=QVBoxLayout(dialog);form.addWidget(QLabel('Shutdown has been requested. Enter a reason to keep with the run data.'))
+        edit=QPlainTextEdit();edit.setPlaceholderText('For example: board 3 output unstable, checking wiring');form.addWidget(edit)
+        save=QPushButton('Save abort reason');save.setEnabled(False);form.addWidget(save)
+        edit.textChanged.connect(lambda:save.setEnabled(bool(edit.toPlainText().strip())))
+        notes=self.worker.notes
+        def store_reason():
+            try:notes.abort_reason(edit.toPlainText())
+            except Exception as e:QMessageBox.warning(dialog,'Could not save reason',str(e));return
+            self.log.appendPlainText('Abort reason: '+edit.toPlainText().strip());self.abort_dialog=None
+            self.startbtn.setEnabled(not self.running);dialog.accept()
+        save.clicked.connect(store_reason);dialog.setModal(True);dialog.show()
     def point(self,batch):
         self.rows.extend(batch);self.progress.setValue(self.progress.value()+1)
         if self.clock:self.clock.point(time.monotonic())
@@ -519,7 +580,7 @@ class Window(QMainWindow):
         summary=' | '.join(f"{r['testpoint']}: {r['mean']:.5f} {r['unit']}" for r in selected)
         self.readout.setText(f"{len(batch)} inputs · "+summary);self.readout.setToolTip(text);self.log.appendPlainText(text);self.redraw()
     def finished(self,text,ok):
-        self.running=False;self.comments.setReadOnly(False);self.startbtn.setEnabled(True);self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True)
+        self.running=False;self.comments.setReadOnly(False);self.startbtn.setEnabled(not bool(getattr(self,'abort_dialog',None)));self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True)
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
         self.estimate_state='done' if ok else 'stopped';self.update_eta();self.sync_overview()
         self.readout.setText(text);self.readout.setToolTip(text)
@@ -531,6 +592,8 @@ class Window(QMainWindow):
             draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_max.value(),color_rows=self.rows,configuration=self.plot_configuration.text() if self.show_configuration.isChecked() else "",dark=True)
             canvas.draw_idle()
     def closeEvent(self,event):
+        if getattr(self,'abort_dialog',None):
+            self.abort_dialog.raise_();event.ignore();return
         if self.worker and self.worker.isRunning():
             self.stop();self.log.appendPlainText('Close deferred until acquisition stops and supply is disabled.');event.ignore()
         else:event.accept()
@@ -538,6 +601,7 @@ class Window(QMainWindow):
 
 if __name__=='__main__':
     app=QApplication(sys.argv);window=Window();window.show();sys.exit(app.exec())
+
 
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 def validate_profile(profile):
+    from connections import endpoints, connection_points
     if profile.get('backend') not in ('pico', 'venelin'):
         raise ValueError('Backend must be pico or venelin')
     boards = profile.get('boards', [])
@@ -24,6 +25,12 @@ def validate_profile(profile):
     if not mappings:
         raise ValueError('Assign at least one measurement input')
     used, targets = set(), set()
+    valid_endpoints=endpoints(profile)
+    for point in connection_points(profile).values():
+        if point.get('positive') not in valid_endpoints or point.get('negative') not in valid_endpoints:
+            raise ValueError('Connection references an unknown endpoint')
+        if point['positive']==point['negative']:
+            raise ValueError('Connection endpoints must differ')
     for m in mappings:
         if m['board'] not in ids:
             raise ValueError('Unknown board ID')
@@ -56,3 +63,4 @@ def default_profile():
 
 def load_profile(path):
     return validate_profile(json.loads(Path(path).read_text()))
+

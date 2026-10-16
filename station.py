@@ -90,8 +90,11 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
         raise ValueError('At most 20 million nominal samples per point')
     if not args.name or args.name in ('.','..') or '/' in args.name or '\\' in args.name:
         raise ValueError('Run name must be a single directory component')
-    if cancel.is_set():raise InterruptedError('Stop requested')
     mappings=profile['mappings']; units={m['channel']:'V' for m in mappings}
+    from connections import connection_points, endpoint_label
+    connections=connection_points(profile)
+    if connections and profile['backend']!='venelin':
+        raise ValueError('Connections require a differential Venelin voltage input; Pico channel grounds are shared')
     if supply is None:
         if args.simulate:supply=SimSupply()
         else:
@@ -118,9 +121,14 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
     metadata['point_timings_s']=[]
     fields=['point','direction','timestamp_UTC','board','testpoint','input','unit','current_set_A',
             'current_measured_A','supply_voltage_V','current_tracking_ok','mean','capture_std',
-            'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision']
+            'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision','positive_endpoint','negative_endpoint']
     try:
+        if cancel.is_set():raise InterruptedError('Stop requested')
         reader.connect()
+        if connections and not args.simulate:
+            for m in mappings:
+                if (m['board'],m['testpoint']) in connections and reader.profiles[m['channel']]['kind']!='dV':
+                    raise ValueError('Connections require a dV input, not a current or absolute-voltage input')
         # Test ADC acquisition before touching the DUT supply. Not a zero calibration.
         if hasattr(reader,'preflight'):reader.preflight()
         supply.connect()
@@ -164,6 +172,9 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                         testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],current_set_A=current,
                         current_measured_A=measured,supply_voltage_V=voltage,
                         current_tracking_ok=abs(measured-current)<=max(.0001,.02*current),comments=comment_text,comments_revision=comment_revision,**stats)
+                    point=connections.get((m['board'],m['testpoint']))
+                    row['positive_endpoint']=endpoint_label(point['positive']) if point else ''
+                    row['negative_endpoint']=endpoint_label(point['negative']) if point else ''
                     batch.append(row)
                 writer.writerows(batch);f.flush();rows.extend(batch)
                 if args.save_waveforms:
@@ -174,6 +185,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                 notes.point_completed(index)
                 if on_point:on_point(batch)
                 print(f'{direction}: {measured*1000:.3f} mA · {len(batch)} mapped inputs',flush=True)
+        if cancel.is_set():raise InterruptedError('Stop requested')
         metadata['status']='complete'
     except BaseException as exc:
         failure=exc;metadata['status']='interrupted' if isinstance(exc,(InterruptedError,KeyboardInterrupt)) else 'failed'
@@ -219,6 +231,7 @@ if __name__=='__main__':
     try:run_mapped(a,load_profile(a.profile),stop)
     except (InterruptedError,KeyboardInterrupt):sys.exit(130)
     except Exception as e:print(f'ERROR: {e}',file=sys.stderr);sys.exit(1)
+
 
 
 
