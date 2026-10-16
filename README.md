@@ -471,3 +471,47 @@ in metadata; CLI equivalents are `--plot-title` and `--plot-max-ma`.
 
 Exports use serif fonts, inward ticks, a dashed grid and 300 dpi PNG output.
 They use Matplotlib text rendering and require no external LaTeX installation.
+
+# Abort reasons and measurements between boards
+
+Clicking **Stop**, or closing the window during a scan, immediately requests the
+existing safe shutdown and opens a required reason dialog. Shutdown continues
+while you type. The reason cannot be left blank or dismissed; save it before
+starting another run or closing the application. It is stored in `abort.json`
+and in `metadata.json` under `abort`, with the request time, reason time and
+last completed point. Your comments remain separate. An interrupted process
+before the reason is entered leaves `reason_pending: true`. Automatic stops
+caused by a comments saving error record the error as their reason.
+
+For a voltage between nodes, select **Venelin / ADC → Add connection…**:
+
+1. Choose the positive and negative endpoints. Each physical board offers GND
+   and its named testpoints; **Global / GND** names your setup's chosen reference.
+2. Choose an unused **dV** input and physically wire its + and − terminals to
+   the corresponding endpoints. For example, `board2 / GND − board1 / GND`
+   measures the ground difference, while `board2 / Vout − Global / GND`
+   measures output voltage relative to the global reference.
+3. Verify the wiring, both pins' common-mode limits, and the differential range,
+   then scan normally. The ADC inputs are not isolated. This feature does not
+   connect, switch, or isolate nodes. Do not connect scope ground clips between
+   different grounds; this feature is restricted to Venelin differential voltage
+   inputs, rather than the shared-ground Pico channels.
+
+A **Connections** card appears beside the physical boards. It supports direct
+input reassignment, include/exclude, live values and normal up/down plots.
+Measurements use one physical ADC input per connection and keep its signed
+voltage and statistics; they are not computed by subtracting separate captures.
+The CSV adds `positive_endpoint` and `negative_endpoint`; the saved profile
+retains structured endpoints. Existing profiles continue to work.
+Remove a connection with **Remove testpoint** on the Connections card, or clear
+its input assignment to leave it out of a scan. Deleting a referenced board or
+testpoint removes its dependent connections. Disabling a physical board also
+excludes connections referencing it from that scan. Auto-assign skips the
+Connections card and preserves its assigned inputs even when replacing the
+physical board assignments.
+
+Validation: 38 unit and offscreen GUI tests, including signed differential data
+and CSV endpoints, wrong-input rejection before supply connection, immediate
+stop with a required reason, persistence after shutdown, and abort before the
+first point. Hardware common-mode limits and wiring require verification on
+the actual setup.

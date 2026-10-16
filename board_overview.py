@@ -9,16 +9,17 @@ class BoardCard(QWidget):
     focused=pyqtSignal(str,str)
     placed=pyqtSignal(str,float,float)
     def __init__(self,board,view_factory):
-        super().__init__();self.board=board;self.setFixedWidth(180)
+        super().__init__();self.board=board;self.setFixedWidth(290 if board.get('kind')=='connections' else 180)
         layout=QVBoxLayout(self);layout.setContentsMargins(7,5,7,5);layout.setSpacing(3)
         self.include=QCheckBox(board['id']);self.include.setToolTip('Include this board in the scan')
         self.include.toggled.connect(lambda value:self.enabled.emit(self.board['id'],value));layout.addWidget(self.include)
         self.view=view_factory();self.view.compact=True;self.view.board=board;self.view.setFixedHeight(112);layout.addWidget(self.view)
         self.view.clicked.connect(self.focus_point)
         self.view.place.connect(lambda x,y:self.placed.emit(self.board['id'],x,y))
+        if board.get('kind')=='connections':self.view.hide()
         self.inputs={}
         for point in board['testpoints']:
-            row=QHBoxLayout();label=QLabel(point['name']);label.setFixedWidth(42);label.setToolTip(point['name'])
+            row=QHBoxLayout();label=QLabel(point['name']);label.setFixedWidth(155 if board.get('kind')=='connections' else 42);label.setWordWrap(True);label.setToolTip(point['name'])
             combo=QComboBox();combo.setMinimumWidth(0);combo.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
             combo.setToolTip('Choose the input physically wired to this testpoint')
             combo.currentIndexChanged.connect(lambda _,name=point['name'],c=combo:self.assigned.emit(self.board['id'],name,c.currentData() or ''))
@@ -76,3 +77,4 @@ class BoardOverview(QScrollArea):
         for board,card in self.cards.items():
             rows=[r for r in batch if r['board']==board]
             if rows:card.status.setText(' · '.join(f"{r['testpoint']} {r['mean']:.4g} {r['unit']}" for r in rows))
+

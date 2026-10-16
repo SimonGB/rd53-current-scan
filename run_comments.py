@@ -8,7 +8,7 @@ import threading
 class RunComments:
     def __init__(self, text=''):
         self.lock=threading.RLock();self.text=text;self.directory=None
-        self.events=[];self.last_completed_point=None;self.metadata=None
+        self.events=[];self.last_completed_point=None;self.metadata=None;self.abort=None
         self._record()
 
     def _record(self):
@@ -23,8 +23,11 @@ class RunComments:
     def _write(self):
         if self.directory is None:return
         files=[('comments.txt',self.text),('comments_history.json',json.dumps(self.events,indent=2)+'\n')]
+        if self.abort is not None:
+            files.append(('abort.json',json.dumps(self.abort,indent=2)+'\n'))
         if self.metadata is not None:
             self.metadata.update(comments=self.text,comments_revision=self.events[-1]['revision'])
+            if self.abort is not None:self.metadata['abort']=dict(self.abort)
             files.append(('metadata.json',json.dumps(self.metadata,indent=2)+'\n'))
         for name,text in files:
             target=self.directory/name;temporary=target.with_name(name+'.tmp')
@@ -38,9 +41,25 @@ class RunComments:
     def snapshot(self):
         with self.lock:return self.text,self.events[-1]['revision']
 
+    def request_abort(self,source='user'):
+        with self.lock:
+            if self.abort is None:
+                self.abort=dict(requested_UTC=datetime.now(timezone.utc).isoformat(),
+                    last_completed_point=self.last_completed_point,source=source,reason=None,reason_pending=True)
+            self._write()
+
+    def abort_reason(self,reason):
+        reason=reason.strip()
+        if not reason:raise ValueError('An abort reason is required')
+        with self.lock:
+            if self.abort is None:self.request_abort()
+            self.abort.update(reason=reason,reason_pending=False,reason_recorded_UTC=datetime.now(timezone.utc).isoformat())
+            self._write()
+
     def finalize(self,metadata):
         with self.lock:
             self.metadata=dict(metadata);self._write()
 
     def point_completed(self,index):
         with self.lock:self.last_completed_point=index
+
