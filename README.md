@@ -472,6 +472,37 @@ in metadata; CLI equivalents are `--plot-title` and `--plot-max-ma`.
 Exports use serif fonts, inward ticks, a dashed grid and 300 dpi PNG output.
 They use Matplotlib text rendering and require no external LaTeX installation.
 
+The editable **Configuration** field adds a small boxed note to both live and
+exported sweep plots. Its current default is
+“3 serial domains: Boards (1 & 2) → (3 & 4) → 5”; clear the field to hide it.
+The default title is now “5 RD53b in 3 serial domains”. Set both fields to match
+the actual wiring for each run. Configuration text is saved in metadata and is
+also available via `--plot-configuration`.
+
+### Replot an existing run
+
+From the repository directory, run:
+
+```bash
+python sweep_plots.py results/RUN_NAME/TIMESTAMP/metadata.json
+```
+
+A run directory or `measurements.csv` path also works. This reads the saved title,
+configuration visibility/text and current range from metadata and regenerates the
+up/down PDF and PNG files. Override older runs or change the presentation with:
+
+```bash
+python sweep_plots.py results/RUN_NAME/TIMESTAMP \
+  --title '5 RD53b in 3 serial domains' --max-ma 100 \
+  --configuration '3 serial domains: Boards (1 & 2) → (3 & 4) → 5'
+```
+
+Use `--no-configuration` to hide the note, or `--output /path/to/plots` to save
+elsewhere. Existing plot files with the same names are replaced.
+
+The GUI's **Show configuration box** checkbox controls visibility without deleting
+the editable text. Live plots use the blue background and brighter colors and
+continue updating during acquisition; PDF/PNG exports retain the white style.
 # Abort reasons and measurements between boards
 
 Clicking **Stop**, or closing the window during a scan, immediately requests the
