@@ -413,3 +413,40 @@ voltage readout before acquisition has been removed; current checks remain.
 `metadata.json` includes per-point acquisition/elapsed timing to diagnose remaining
 overhead on the bench. Five-board GUI simulation and helper-batching tests passed;
 no hardware speedup factor is claimed until measured on the actual setup.
+
+
+## Side-by-side assignment, sweep styling and run-time estimates
+
+**All boards · assign inputs** is now the default view. Every RD53 board has a
+card with its image, inclusion checkbox, testpoint input dropdowns and latest
+readings. Assign channels directly on any card without switching the selected
+board. Inputs already assigned to other testpoints are disabled in the dropdown;
+choose **Not assigned** to release one. Channel tooltips show the full fitted
+input type/unit. Editing is disabled during acquisition, while comments remain
+editable. Cards remain in a horizontal row with scrolling on narrow screens.
+
+Clicking a marker focuses its input selector and the corresponding wiring row.
+Use **Selected board · place markers** for the larger image when positioning
+markers. Quick setup, templates, automatic assignment, deletion and profiles
+continue to work with the overview.
+
+Upward curves use a **solid line with filled circles**. Downward curves use a
+**dotted line with hollow downward triangles**, in the **same color** as the
+upward curve for that board/testpoint. Live plots, mapped PNG/PDF exports and
+legacy scan plots follow the same convention. Filtering boards does not change
+a signal's color within a run.
+
+The label next to the percentage bar shows an approximate total time before
+Start, then approximate time remaining. Initial estimates use point count,
+reverse sweep, recording duration, settling and provisional initialization/
+readout/finalization overhead; simulation uses a shorter timing model. After
+completed points, the estimate adapts using recent point-to-point durations.
+During file saving/plotting after the last point it shows **Finalizing…**;
+completion/stopping shows elapsed time. Estimates are indicative, not a timeout
+or a guarantee: device initialization, blocked reads and file I/O can take longer.
+
+Validation: 28 automated tests passed, including direct assignment on board 3
+without switching views, input conflict prevention, time-estimate refinement and
+matching export styles. A simulated five-board, 20-point scan verified card
+readouts, editing interlocks and final ETA state. No instrument protocol or
+hardware timing settings changed in this GUI update.

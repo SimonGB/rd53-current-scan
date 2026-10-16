@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 import time
 import numpy as np
+from plot_style import PALETTE,sweep_style
 
 
 def current_points(start, stop, step):
@@ -37,7 +38,8 @@ def plot(rows, directory):
                                     ('Reference CH1/A', 'Output CH2/B')):
             ax.errorbar(x, [r[f'{signal}_mean_V'] for r in subset],
                         yerr=[r[f'{signal}_capture_std_V'] for r in subset],
-                        marker='o', markersize=3, label=direction, capsize=2)
+                        markersize=3, label=direction, capsize=2,
+                        **sweep_style(direction,PALETTE[0 if signal=='reference' else 1]))
             ax.set_ylabel(f'{label} [V]')
             ax.grid(alpha=.3)
             ax.legend()
@@ -245,4 +247,5 @@ if __name__ == '__main__':
     except Exception as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         sys.exit(1)
+
 

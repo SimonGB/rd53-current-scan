@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import os
 import threading
+import time
 
 # Avoid system GTK/GNOME theme plugins whose GSettings schema may mismatch
 # the libraries loaded by a scientific Python environment. Process-local only.
@@ -25,6 +26,9 @@ from mapping import default_profile,validate_profile
 from scan import parser
 from station import run_mapped
 from run_comments import RunComments
+from board_overview import BoardOverview
+from plot_style import signal_colors,sweep_style
+from progress_estimate import ProgressEstimate,duration
 from board_setup import add_boards,auto_assign,delete_testpoint,active_profile
 
 
@@ -55,7 +59,7 @@ class BoardView(QWidget):
     place=pyqtSignal(float,float)
     def __init__(self):
         super().__init__();self.board={};self.mappings=[];self.selected='';self.edit=False
-        self._path=None;self._pix=QPixmap()
+        self._path=None;self._pix=QPixmap();self.compact=False
         self.setMinimumHeight(180);self.setMaximumHeight(340)
         self.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Expanding)
     def image(self):
@@ -74,15 +78,16 @@ class BoardView(QWidget):
         else:
             p.setBrush(QColor('#123c3b'));p.setPen(QPen(QColor('#297570'),2));p.drawRoundedRect(r,12,12)
             p.setPen(QColor('#b7dcd6'));p.setFont(QFont('Sans',10));p.drawText(r.toRect(),Qt.AlignmentFlag.AlignCenter,
-                'RD53 v2 · '+self.board.get('id','')+'\nSchematic view — positions unverified')
+                self.board.get('id','') if self.compact else 'RD53 v2 · '+self.board.get('id','')+'\nSchematic view — positions unverified')
         for tp in self.board.get('testpoints',[]):
             x=r.left()+tp['x']*r.width();y=r.top()+tp['y']*r.height()
             matches=[m for m in self.mappings if m['board']==self.board.get('id') and m['testpoint']==tp['name']]
             p.setBrush(QColor('#fbbf24' if tp['name']==self.selected else '#60d5b5' if matches else '#9cabbc'))
             p.setPen(QPen(QColor('#081820'),2));p.drawEllipse(int(x-7),int(y-7),14,14)
             p.setPen(QColor('#ffffff'));p.setFont(QFont('Sans',9))
-            text=tp['name']+(' ← '+matches[0]['channel'] if matches else '')
-            p.drawText(int(max(2,min(x-45,self.width()-170))),int(min(y+24,self.height()-4)),text)
+            text=tp['name']+(' ← '+matches[0]['channel'] if matches and not self.compact else '')
+            label_width=42 if self.compact else 170
+            p.drawText(int(max(2,min(x-(20 if self.compact else 45),self.width()-label_width))),int(min(y+24,self.height()-4)),text)
         p.end()
     def mousePressEvent(self,event):
         r=self.content_rect();pos=event.position();x=(pos.x()-r.left())/r.width();y=(pos.y()-r.top())/r.height()
@@ -97,7 +102,7 @@ class Window(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle('RD53 · Powering Test Station')
         screen=QApplication.primaryScreen().availableGeometry();self.resize(min(1380,int(screen.width()*.95)),min(920,int(screen.height()*.92)))
-        self.profile=default_profile();self.worker=None;self.rows=[];self.running=False
+        self.profile=default_profile();self.worker=None;self.rows=[];self.running=False;self.clock=None;self.estimate_state='preview'
         root=QWidget();self.setCentralWidget(root);layout=QVBoxLayout(root)
         header=QHBoxLayout();title=QLabel('RD53  /  Powering Test Station');title.setStyleSheet('font-size:24px;font-weight:700;color:#e2f0ff')
         header.addWidget(title);header.addStretch();self.state=QLabel('READY');header.addWidget(self.state);layout.addLayout(header)
@@ -140,7 +145,8 @@ class Window(QMainWindow):
         note=QLabel('Multiple boards share one swept supply channel.\nInput assignment records wiring; it does not switch connections.\nADC inputs are not isolated: verify chain common-mode limits.');note.setWordWrap(True);ll.addWidget(note)
         buttons=QHBoxLayout();self.startbtn=QPushButton('▶  Start scan');self.startbtn.setStyleSheet('background:#177e6a;font-weight:700')
         self.stopbtn=QPushButton('■  Stop');self.stopbtn.setEnabled(False);buttons.addWidget(self.startbtn);buttons.addWidget(self.stopbtn);sideLayout.addLayout(buttons)
-        self.progress=QProgressBar();self.progress.setRange(0,100);sideLayout.addWidget(self.progress)
+        self.progress=QProgressBar();self.progress.setRange(0,100)
+        progressrow=QHBoxLayout();progressrow.addWidget(self.progress,1);self.eta=QLabel('Estimating…');self.eta.setMinimumWidth(115);progressrow.addWidget(self.eta);sideLayout.addLayout(progressrow)
         right=QWidget();right.setMinimumWidth(0);rl=QVBoxLayout(right);splitter.addWidget(right);splitter.setSizes([350,950])
         tools=QHBoxLayout();self.boardselect=QComboBox();self.boardselect.setMinimumContentsLength(8)
         self.boardselect.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon);tools.addWidget(self.boardselect)
@@ -152,7 +158,10 @@ class Window(QMainWindow):
                          ('Save profile',self.save_profile),('Load profile',self.load_profile)]:
             menu.addAction(title,fn)
         tool.setMenu(menu);tools.addWidget(tool);tools.addStretch();rl.addLayout(tools)
-        self.view=BoardView();rl.addWidget(self.view)
+        self.boardtabs=QTabWidget();self.overview=BoardOverview(BoardView);self.boardtabs.addTab(self.overview,'All boards · assign inputs')
+        self.view=BoardView();self.boardtabs.addTab(self.view,'Selected board · place markers');rl.addWidget(self.boardtabs)
+        self.overview.assigned.connect(self.assign_from_card);self.overview.enabled.connect(self.include_from_card)
+        self.overview.focused.connect(self.focus_from_card);self.overview.placed.connect(self.place_from_card)
         editrow=QHBoxLayout();self.editpoints=QCheckBox('Place / move testpoints on click');editrow.addWidget(self.editpoints)
         remove=QPushButton('Remove testpoint');remove.clicked.connect(self.remove_testpoint);editrow.addWidget(remove);editrow.addStretch();rl.addLayout(editrow)
         self.table=QTableWidget(0,5);self.table.setHorizontalHeaderLabels(['RD53 board','Testpoint','Measurement input','Probe × (Pico)','BNC ±range [V] (Pico)'])
@@ -170,15 +179,80 @@ class Window(QMainWindow):
         self.readout=QLabel('No measurements yet');self.readout.setWordWrap(True);self.readout.setMaximumHeight(65);self.readout.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred);rl.addWidget(self.readout)
         self.backend.currentTextChanged.connect(self.change_backend);self.boardselect.currentTextChanged.connect(self.refresh_board)
         self.view.clicked.connect(self.select_point);self.view.place.connect(self.place_point)
-        self.editpoints.toggled.connect(lambda v:setattr(self.view,'edit',v))
+        self.editpoints.toggled.connect(self.set_edit_mode)
         self.startbtn.clicked.connect(self.start);self.stopbtn.clicked.connect(self.stop)
         self.table.itemChanged.connect(lambda _:self.refresh_board());self.rebuild();self.redraw()
+        self.eta_timer=QTimer(self);self.eta_timer.setInterval(1000);self.eta_timer.timeout.connect(self.update_eta);self.eta_timer.start()
+        for box in self.fields.values():box.valueChanged.connect(self.reset_eta)
+        self.captures.valueChanged.connect(self.reset_eta);self.reverse.toggled.connect(self.reset_eta);self.sim.toggled.connect(self.reset_eta)
+        self.update_eta()
         self.setStyleSheet(self.styleSheet()+'''QMainWindow,QWidget {background:#0c1825;color:#d8e5f2;font-size:12px;}
             QLineEdit,QDoubleSpinBox,QSpinBox,QComboBox,QPlainTextEdit,QTableWidget {background:#172a3c;border:1px solid #30475d;border-radius:5px;padding:4px;}
             QPushButton {background:#22394e;border:1px solid #36546b;border-radius:6px;padding:7px;}
             QPushButton:disabled {color:#617488;} QHeaderView::section {background:#22394e;padding:5px;}
             QTabBar::tab {background:#172a3c;padding:7px;} QTabBar::tab:selected {background:#28506c;}
             QProgressBar {border:1px solid #30475d;border-radius:5px;text-align:center;} QProgressBar::chunk {background:#33b393;}''')
+
+    def sync_overview(self):
+        try:mappings=self.read_mapping()
+        except ValueError:mappings=[]
+        self.overview.sync(self.profile['boards'],mappings,self.input_choices(),self.running,self.editpoints.isChecked(),self.boardselect.currentText(),self.view.selected)
+
+    def assign_from_card(self,board,point,channel):
+        if self.running:return
+        mappings=self.read_mapping()
+        if channel and any(m['channel']==channel and (m['board'],m['testpoint'])!=(board,point) for m in mappings):
+            QMessageBox.warning(self,'Input already assigned','Choose an unused input, or clear its existing assignment first.');self.sync_overview();return
+        existing=next((m for m in mappings if (m['board'],m['testpoint'])==(board,point)),None)
+        mappings=[m for m in mappings if (m['board'],m['testpoint'])!=(board,point)]
+        if channel:
+            record=existing or dict(board=board,testpoint=point,probe=1,range=2)
+            record['channel']=channel;mappings.append(record)
+        self.profile['mappings']=mappings;self.verified.setChecked(False);self.rebuild()
+
+    def include_from_card(self,board,value):
+        if self.running:return
+        next(b for b in self.profile['boards'] if b['id']==board)['enabled']=value
+        self.verified.setChecked(False);self.refresh_board()
+
+    def focus_from_card(self,board,point):
+        self.boardselect.setCurrentText(board);self.select_point(point)
+
+    def place_from_card(self,board,x,y):
+        if self.running:return
+        self.boardselect.setCurrentText(board);self.place_point(x,y)
+
+    def set_edit_mode(self,value):
+        self.view.edit=value and not self.running;self.sync_overview()
+
+    def new_estimate(self):
+        from scan import current_points
+        count=len(current_points(self.fields['start'].value(),self.fields['stop'].value(),self.fields['step'].value()))*(2 if self.reverse.isChecked() else 1)
+        recording=self.captures.value()*self.fields['capture_time'].value()
+        overhead=.7 if self.backend.currentText()=='venelin' else .5+self.captures.value()*.02
+        if self.sim.isChecked():return ProgressEstimate(count,.05,startup=.1,finalization=2)
+        return ProgressEstimate(count,self.fields['settle'].value()+recording+overhead,
+            startup=5 if self.backend.currentText()=='venelin' else 2,finalization=2)
+
+    def reset_eta(self,*_):
+        if not self.running:self.estimate_state='preview';self.clock=None
+        self.update_eta()
+
+    def update_eta(self):
+        try:
+            if not self.running and self.estimate_state=='preview':
+                estimate=self.new_estimate();self.eta.setText('≈ '+duration(estimate.remaining(time.monotonic()))+' total')
+                self.eta.setToolTip('Initial estimate includes recording, settling and provisional setup/readout overhead. Refines after completed points.');return
+            if self.clock is None:return
+            now=time.monotonic();elapsed=duration(now-self.clock.started)
+            if self.estimate_state=='done':text='Done · '+elapsed
+            elif self.estimate_state=='stopped':text='Stopped · '+elapsed
+            elif self.estimate_state=='stopping':text='Stopping…'
+            else:
+                remaining=self.clock.remaining(now)
+                text='Finalizing…' if remaining is None else '≈ '+duration(remaining)+' left'
+            self.eta.setText(text);self.eta.setToolTip('Elapsed: '+elapsed+'; estimate adapts to recent completed points. Initialization, timeouts and final file saving may take longer.')
+        except (ValueError,OverflowError):self.eta.setText('Set scan range')
 
     def browse_adc(self,key):
         path=QFileDialog.getExistingDirectory(self,'pmod_adc repository') if key=='root' else QFileDialog.getOpenFileName(self,'Choose '+key)[0]
@@ -224,9 +298,9 @@ class Window(QMainWindow):
         except ValueError:self.view.mappings=[]
         self.include.blockSignals(True);self.include.setChecked(self.view.board.get('enabled',True));self.include.blockSignals(False)
         for row in range(self.table.rowCount()):self.table.setRowHidden(row,not self.showall.isChecked() and self.table.item(row,0).text()!=self.boardselect.currentText())
-        self.view.update();self.redraw()
+        self.view.update();self.sync_overview();self.redraw()
     def select_point(self,name):
-        self.view.selected=name;self.view.update()
+        self.view.selected=name;self.view.update();self.sync_overview()
         for r in range(self.table.rowCount()):
             if self.table.item(r,0).text()==self.boardselect.currentText() and self.table.item(r,1).text()==name:
                 self.table.selectRow(r);return
@@ -297,7 +371,7 @@ class Window(QMainWindow):
     def enable_board(self,value):
         if self.running:
             self.include.blockSignals(True);self.include.setChecked(self.view.board.get('enabled',True));self.include.blockSignals(False);return
-        self.view.board['enabled']=value;self.verified.setChecked(False)
+        self.view.board['enabled']=value;self.verified.setChecked(False);self.sync_overview()
 
     def remove_board(self):
         if self.running:return
@@ -409,6 +483,8 @@ class Window(QMainWindow):
             from scan import current_points
             count=len(current_points(args.start,args.stop,args.step))*(2 if args.reverse else 1)
             self.progress.setRange(0,count);self.progress.setValue(0);self.rows=[];self.redraw();self.running=True
+            self.clock=self.new_estimate();self.clock.start(time.monotonic());self.estimate_state='running';self.update_eta();self.sync_overview()
+            for card in self.overview.cards.values():card.status.setText('Waiting for data…')
             self.table.setEnabled(False);self.backend.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
             self.state.setText('SIMULATING' if args.simulate else 'MEASURING');self.log.appendPlainText(json.dumps(p,indent=2))
             self.worker=Worker(args,p);self.worker.point.connect(self.point);self.worker.done.connect(self.finished);self.worker.start()
@@ -421,9 +497,11 @@ class Window(QMainWindow):
                 self.stop()
 
     def stop(self):
-        if self.worker:self.worker.stop.set();self.state.setText('STOPPING · waiting for safe shutdown');self.stopbtn.setEnabled(False)
+        if self.worker:self.worker.stop.set();self.state.setText('STOPPING · waiting for safe shutdown');self.stopbtn.setEnabled(False);self.estimate_state='stopping';self.update_eta()
     def point(self,batch):
         self.rows.extend(batch);self.progress.setValue(self.progress.value()+1)
+        if self.clock:self.clock.point(time.monotonic())
+        self.overview.readings(batch);self.update_eta()
         text=' | '.join(f"{r['board']} {r['testpoint']}: {r['mean']:.5f} {r['unit']} · σ={r['sample_std']:.5g}" for r in batch)
         selected=[r for r in batch if r['board']==self.boardselect.currentText()]
         summary=' | '.join(f"{r['testpoint']}: {r['mean']:.5f} {r['unit']}" for r in selected)
@@ -431,9 +509,11 @@ class Window(QMainWindow):
     def finished(self,text,ok):
         self.running=False;self.comments.setReadOnly(False);self.startbtn.setEnabled(True);self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True)
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
+        self.estimate_state='done' if ok else 'stopped';self.update_eta();self.sync_overview()
         self.readout.setText(text);self.readout.setToolTip(text)
     def redraw(self):
         self.figure.clear()
+        colors=signal_colors(self.rows)
         visible=self.rows if self.plotall.isChecked() else [r for r in self.rows if r['board']==self.boardselect.currentText()]
         units=list(dict.fromkeys(r['unit'] for r in visible)) or ['V']
         for index,unit in enumerate(units):
@@ -442,7 +522,8 @@ class Window(QMainWindow):
             for board,tp,direction in targets:
                 rr=[r for r in visible if (r['board'],r['testpoint'],r['unit'],r['direction'])==(board,tp,unit,direction)]
                 ax.errorbar([r['current_measured_A']*1000 for r in rr],[r['mean'] for r in rr],
-                    yerr=[r['capture_std'] or 0 for r in rr],marker='o',markersize=3,label=f'{board} {tp} {direction}')
+                    yerr=[r['capture_std'] or 0 for r in rr],markersize=3,label=f'{board} {tp} {direction}',
+                    **sweep_style(direction,colors[(board,tp,unit)]))
             ax.set_xlabel('Measured supply current [mA]',color='#c6d8e9')
             ax.set_ylabel('Current [A]' if unit=='A' else 'Voltage [V]',color='#c6d8e9')
             ax.tick_params(colors='#c6d8e9');ax.grid(alpha=.15)
@@ -456,6 +537,7 @@ class Window(QMainWindow):
 
 if __name__=='__main__':
     app=QApplication(sys.argv);window=Window();window.show();sys.exit(app.exec())
+
 
 
 

@@ -12,6 +12,7 @@ from mapping import validate_profile, load_profile
 from scan import current_points, parser, SimSupply
 from run_comments import RunComments
 from board_setup import active_profile
+from plot_style import signal_colors,sweep_style
 
 
 def summaries(waves):
@@ -58,6 +59,7 @@ def plot_mapped(rows,out):
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     targets=list(dict.fromkeys((r['board'],r['testpoint'],r['unit']) for r in rows))
+    colors=signal_colors(rows)
     fig=Figure(figsize=(9,max(4,2.8*len(targets))))
     FigureCanvasAgg(fig)
     for i,(board,tp,unit) in enumerate(targets):
@@ -66,7 +68,7 @@ def plot_mapped(rows,out):
             rr=[r for r in rows if (r['board'],r['testpoint'])==(board,tp) and r['direction']==direction]
             if rr:
                 ax.errorbar([r['current_measured_A']*1000 for r in rr],[r['mean'] for r in rr],
-                    yerr=[r['capture_std'] or 0 for r in rr],marker='o',label=direction)
+                    yerr=[r['capture_std'] or 0 for r in rr],label=direction,**sweep_style(direction,colors[(board,tp,unit)]))
         ax.set_ylabel(f'{board} · {tp} [{unit}]');ax.grid(alpha=.25);ax.legend()
     ax.set_xlabel('Measured supply current [mA]')
     fig.tight_layout();fig.savefig(out/'mapped_voltages.png',dpi=150);fig.savefig(out/'mapped_voltages.pdf')
@@ -210,5 +212,6 @@ if __name__=='__main__':
     try:run_mapped(a,load_profile(a.profile),stop)
     except (InterruptedError,KeyboardInterrupt):sys.exit(130)
     except Exception as e:print(f'ERROR: {e}',file=sys.stderr);sys.exit(1)
+
 
 
