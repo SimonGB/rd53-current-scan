@@ -29,7 +29,66 @@ def signal_kind(name):
     return name
 
 
-def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, configuration="", dark=False):
+def voltage_drops(rows):
+    """Pair unambiguous local Vin/Vout records at the SAME acquired point."""
+    groups = {}
+    for row in rows:
+        kind = signal_kind(row['testpoint'])
+        if (row['unit'] != 'V' or kind not in ('in', 'out')
+                or row.get('point') is None
+                or row.get('positive_endpoint') or row.get('negative_endpoint')):
+            continue
+        key = (row['board'], row['direction'], row['point'])
+        groups.setdefault(key, {'in': [], 'out': []})[kind].append(row)
+    result = []
+    for pair in groups.values():
+        if len(pair['in']) != 1 or len(pair['out']) != 1:
+            continue  # Never choose silently between multiple Vin/Vout channels.
+        vin, vout = pair['in'][0], pair['out'][0]
+        if not all(math.isfinite(r[k]) for r in (vin, vout)
+                   for k in ('mean', 'current_measured_A')):
+            continue
+        if not math.isclose(vin['current_measured_A'], vout['current_measured_A'],
+                            rel_tol=1e-8, abs_tol=1e-12):
+            continue
+        result.append(dict(vin, mean=vin['mean'] - vout['mean'],
+                           testpoint='Vin − Vout'))
+    return result
+
+
+def load_run(path):
+    """Read a mapped run without modifying metadata or touching hardware."""
+    import csv
+    import json
+    from pathlib import Path
+    path = Path(path)
+    directory = path if path.is_dir() else path.parent
+    metadata_path = directory / 'metadata.json'
+    metadata = json.loads(metadata_path.read_text(encoding='utf-8')) if metadata_path.exists() else {}
+    csv_path = path if path.suffix.lower() == '.csv' else directory / 'measurements.csv'
+    rows = []
+    with csv_path.open(newline='', encoding='utf-8-sig') as handle:
+        reader = csv.DictReader(handle)
+        required = {'board', 'testpoint', 'unit', 'direction', 'current_measured_A', 'mean', 'point'}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError('Not a mapped measurements CSV; missing: ' + ', '.join(sorted(missing)))
+        for number, row in enumerate(reader, start=2):
+            try:
+                row['current_measured_A'] = float(row['current_measured_A'])
+                row['mean'] = float(row['mean'])
+                row['point'] = int(row['point'])
+                if row['direction'] not in ('up', 'down'):
+                    raise ValueError('direction must be up or down')
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f'Invalid measurement at CSV line {number}: {exc}') from exc
+            rows.append(row)
+    if not rows:
+        raise ValueError('No measurement records in CSV')
+    return rows, metadata.get('settings', {}), directory
+
+
+def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, configuration="", dark=False, show_difference=True):
     """One figure per direction; separate axes for different physical units."""
     figure.clear()
     boards = list(dict.fromkeys(r['board'] for r in (color_rows or rows)))
@@ -39,6 +98,8 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                and math.isfinite(r['mean'])
                and 0 <= r['current_measured_A'] * 1000 <= maximum]
     units = list(dict.fromkeys(r['unit'] for r in visible)) or ['V']
+    drops = voltage_drops(visible) if show_difference else []
+    panels = len(units) + bool(drops)
     theme = dict(STYLE)
     if dark:
         theme.update({'font.family': 'sans-serif', 'axes.facecolor': '#101f2e',
@@ -52,7 +113,7 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
     figure.set_facecolor('#101f2e' if dark else 'white')
     with rc_context(theme):
         for index, unit in enumerate(units):
-            ax = figure.add_subplot(len(units), 1, index + 1)
+            ax = figure.add_subplot(panels, 1, index + 1)
             handles = {}
             targets = list(dict.fromkeys((r['board'], r['testpoint'])
                                         for r in visible if r['unit'] == unit))
@@ -103,10 +164,28 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
             ax.yaxis.set_minor_locator(AutoMinorLocator(2))
             ax.tick_params(which='both', top=True, right=True)
             ax.grid(which='major')
+        if drops:
+            drop_ax = figure.add_subplot(panels, 1, panels, sharex=figure.axes[0])
+            for board in boards:
+                records = sorted((r for r in drops if r['board'] == board), key=lambda r: r['point'])
+                if records:
+                    drop_ax.plot([r['current_measured_A'] * 1000 for r in records],
+                                 [r['mean'] for r in records], color=colors[board],
+                                 linestyle='-', marker='D', markersize=3,
+                                 markerfacecolor='none', linewidth=1.3, label=board)
+            drop_ax.set_ylabel(r'$V_\mathrm{in}-V_\mathrm{out}$ (V)')
+            drop_ax.set_title('Regulator voltage drop', loc='left', fontsize=11)
+            drop_ax.set_xlabel('Measured supply current (mA)')
+            drop_ax.set_xlim(0, maximum)
+            drop_ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+            drop_ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+            drop_ax.tick_params(which='both', top=True, right=True)
+            drop_ax.grid(which='major')
+            drop_ax.legend(fontsize=8, loc='best', ncol=min(3, len(boards)))
         figure.tight_layout()
 
 
-def export_sweeps(rows, directory, title='5 RD53b in 3 serial domains', maximum=100, configuration=''):
+def export_sweeps(rows, directory, title='5 RD53b in 3 serial domains', maximum=100, configuration='', show_difference=True, color_rows=None):
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     for direction in ('up', 'down'):
@@ -114,9 +193,10 @@ def export_sweeps(rows, directory, title='5 RD53b in 3 serial domains', maximum=
             continue
         with rc_context(STYLE):
             units = set(r['unit'] for r in rows if r['direction'] == direction)
-            figure = Figure(figsize=(7, 5 * max(1, len(units))), facecolor='white')
+            has_drop = show_difference and bool(voltage_drops([r for r in rows if r['direction'] == direction and 0 <= r['current_measured_A']*1000 <= maximum]))
+            figure = Figure(figsize=(7, 4 * (max(1, len(units)) + has_drop)), facecolor='white')
             FigureCanvasAgg(figure)
-            draw_sweep(figure, rows, direction, title, maximum, configuration=configuration)
+            draw_sweep(figure, rows, direction, title, maximum, configuration=configuration, show_difference=show_difference, color_rows=color_rows)
             for extension in ('pdf', 'png'):
                 figure.savefig(directory / f'mapped_voltages_{direction}.{extension}',
                                dpi=300, bbox_inches='tight')
@@ -125,8 +205,6 @@ def export_sweeps(rows, directory, title='5 RD53b in 3 serial domains', maximum=
 def main():
     """Regenerate plots using the run's saved settings and measurement CSV."""
     import argparse
-    import csv
-    import json
     from pathlib import Path
     parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument('run', type=Path, help='Run folder, metadata.json, or measurements.csv')
@@ -134,12 +212,10 @@ def main():
     parser.add_argument('--configuration', help='Override configuration box text')
     parser.add_argument('--no-configuration', action='store_true', help='Hide the configuration box')
     parser.add_argument('--max-ma', type=float, help='Upper plot limit in mA')
+    parser.add_argument('--no-difference', action='store_true', help='Hide Vin − Vout subplot')
     parser.add_argument('--output', type=Path, help='Output folder; default is the run folder')
     args = parser.parse_args()
-    directory = args.run if args.run.is_dir() else args.run.parent
-    metadata_path = directory / 'metadata.json'
-    metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
-    settings = metadata.get('settings', {})
+    rows, settings, directory = load_run(args.run)
     title = args.title if args.title is not None else settings.get('plot_title', 'RD53b current scan')
     maximum = args.max_ma if args.max_ma is not None else float(settings.get('plot_max_ma', 100))
     configuration = (args.configuration if args.configuration is not None
@@ -148,19 +224,10 @@ def main():
         configuration = ''
     if not math.isfinite(maximum) or maximum <= 0:
         parser.error('--max-ma must be a positive finite number')
-    csv_path = args.run if args.run.suffix.lower() == '.csv' else directory / 'measurements.csv'
-    rows = []
-    with csv_path.open(newline='') as handle:
-        for row in csv.DictReader(handle):
-            row['current_measured_A'] = float(row['current_measured_A'])
-            row['mean'] = float(row['mean'])
-            row['point'] = int(row['point'])
-            rows.append(row)
-    if not rows:
-        parser.error('No measurement records in CSV')
     output = args.output or directory
     output.mkdir(parents=True, exist_ok=True)
-    export_sweeps(rows, output, title, maximum, configuration)
+    export_sweeps(rows, output, title, maximum, configuration,
+                  show_difference=not args.no_difference and not settings.get('plot_hide_difference', False))
     print(f'Saved up/down PDF and PNG plots in {output}')
 
 
