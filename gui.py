@@ -579,7 +579,7 @@ class Window(QMainWindow):
             self.progress.setRange(0,count);self.progress.setValue(0);self.rows=[];self.save_plots_button.setEnabled(False);self.redraw();self.running=True
             self.clock=self.new_estimate();self.clock.start(time.monotonic());self.estimate_state='running';self.update_eta();self.sync_overview()
             for card in self.overview.cards.values():card.status.setText('Waiting for data…')
-            self.table.setEnabled(False);self.backend.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
+            self.table.setEnabled(False);self.backend.setEnabled(False);self.sweep_mode.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
             self.state.setText('SIMULATING' if args.simulate else 'MEASURING');self.log.appendPlainText(json.dumps(p,indent=2))
             self.worker=Worker(args,p);self.worker.point.connect(self.point);self.worker.done.connect(self.finished);self.worker.start()
         except Exception as e:QMessageBox.warning(self,'Cannot start',str(e))
@@ -621,7 +621,7 @@ class Window(QMainWindow):
         summary=' | '.join(f"{r['testpoint']}: {r['mean']:.5f} {r['unit']}" for r in selected)
         self.readout.setText(f"{len(batch)} inputs · "+summary);self.readout.setToolTip(text);self.log.appendPlainText(text);self.save_plots_button.setEnabled(bool(self.rows));self.redraw()
     def finished(self,text,ok):
-        self.running=False;self.comments.setReadOnly(False);self.startbtn.setEnabled(not bool(getattr(self,'abort_dialog',None)));self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True)
+        self.running=False;self.comments.setReadOnly(False);self.startbtn.setEnabled(not bool(getattr(self,'abort_dialog',None)));self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True);self.sweep_mode.setEnabled(True)
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
         self.estimate_state='done' if ok else 'stopped';self.update_eta();self.sync_overview()
         self.readout.setText(text);self.readout.setToolTip(text)
