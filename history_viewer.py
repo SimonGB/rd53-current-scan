@@ -55,7 +55,7 @@ class HistoryViewer(QDialog):
             page_layout.addWidget(scroll)
             tabs.addTab(page, direction.capitalize() + ' sweep')
             self.plots.append((direction, figure, canvas))
-        export = QPushButton('Export displayed plots…');export.clicked.connect(self.export)
+        export = QPushButton('Save Plots…');export.clicked.connect(self.export)
         layout.addWidget(export)
         for field in (self.title, self.configuration):
             field.textChanged.connect(self.redraw)
@@ -83,7 +83,7 @@ class HistoryViewer(QDialog):
             canvas.draw_idle()
 
     def export(self):
-        path = QFileDialog.getExistingDirectory(self, 'Export PDF/PNG plots', str(self.directory))
+        path = QFileDialog.getExistingDirectory(self, 'Save PDF/PNG plots', str(self.directory))
         if not path:
             return
         from pathlib import Path
