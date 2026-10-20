@@ -617,8 +617,8 @@ class Window(QMainWindow):
         if existing:
             response = QMessageBox.question(
                 self, 'Replace existing plots?',
-                'These files already exist and would be replaced:\\n' +
-                '\\n'.join(existing) + '\\n\\nContinue?',
+                'These files already exist and would be replaced:\n' +
+                '\n'.join(existing) + '\n\nContinue?',
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if response != QMessageBox.StandardButton.Yes:
@@ -628,7 +628,7 @@ class Window(QMainWindow):
                 rows, output, self.plot_title.text(), self.plot_max.value(),
                 self.plot_configuration.text() if self.show_configuration.isChecked() else '',
                 show_difference=self.show_difference.isChecked(), color_rows=self.rows)
-            QMessageBox.information(self, 'Plots saved', f'PNG and PDF plots saved to:\\n{output}')
+            QMessageBox.information(self, 'Plots saved', f'PNG and PDF plots saved to:\n{output}')
         except Exception as exc:
             QMessageBox.warning(self, 'Cannot save plots', str(exc))
 
