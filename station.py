@@ -67,23 +67,25 @@ def plot_mapped(rows,out):
         for direction in ('up','down'):
             rr=[r for r in rows if (r['board'],r['testpoint'])==(board,tp) and r['direction']==direction]
             if rr:
-                ax.errorbar([r['current_measured_A']*1000 for r in rr],[r['mean'] for r in rr],
+                ax.errorbar([r.get('voltage_measured_V',r['supply_voltage_V']) if r.get('sweep_mode')=='voltage' else r['current_measured_A']*1000 for r in rr],[r['mean'] for r in rr],
                     yerr=[r['capture_std'] or 0 for r in rr],label=direction,**sweep_style(direction,colors[(board,tp,unit)]))
         ax.set_ylabel(f'{board} · {tp} [{unit}]');ax.grid(alpha=.25);ax.legend()
-    ax.set_xlabel('Measured supply current [mA]')
+    ax.set_xlabel('Measured supply voltage [V]' if rows[0].get('sweep_mode')=='voltage' else 'Measured supply current [mA]')
     fig.tight_layout();fig.savefig(out/'mapped_voltages.png',dpi=150);fig.savefig(out/'mapped_voltages.pdf')
 
 
 def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,notes=None):
     profile=validate_profile(active_profile(profile)); cancel=cancel or threading.Event()
     notes=notes or RunComments(getattr(args,'comments',''))
+    mode=getattr(args,'sweep_mode','current')
+    if mode not in ('current','voltage'):raise ValueError('Invalid sweep mode')
     points=current_points(args.start,args.stop,args.step)
-    plot_max=getattr(args,'plot_max_ma',100)
+    plot_max=getattr(args,'plot_max_v',2.0) if mode=='voltage' else getattr(args,'plot_max_ma',100)
     if not math.isfinite(plot_max) or plot_max<=0:raise ValueError('Invalid plot maximum')
     for name in ('voltage_limit','max_current','sample_rate','capture_time'):
         if not math.isfinite(getattr(args,name)) or getattr(args,name)<=0:raise ValueError(f'Invalid {name}')
-    if args.stop>args.max_current or args.max_current>10 or args.voltage_limit>32:
-        raise ValueError('Sweep exceeds supply or configured current limits')
+    if args.max_current>10 or args.voltage_limit>32 or (mode=='current' and args.stop>args.max_current) or (mode=='voltage' and args.stop>args.voltage_limit):
+        raise ValueError('Sweep exceeds supply or configured limits')
     if args.captures<1 or args.captures>10000 or not math.isfinite(args.settle) or args.settle<0:
         raise ValueError('Invalid capture count or settling delay')
     if args.sample_rate*args.capture_time*args.captures>20000000:
@@ -119,7 +121,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
     pending_raw=None
     metadata['acquisition_mode']='batched_contiguous_windows' if hasattr(reader,'capture_many') else 'separate_captures'
     metadata['point_timings_s']=[]
-    fields=['point','direction','timestamp_UTC','board','testpoint','input','unit','current_set_A',
+    fields=['point','direction','timestamp_UTC','board','testpoint','input','unit','sweep_mode','voltage_set_V','voltage_measured_V','voltage_tracking_ok','current_set_A',
             'current_measured_A','supply_voltage_V','current_tracking_ok','mean','capture_std',
             'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision','positive_endpoint','negative_endpoint']
     try:
@@ -138,14 +140,15 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
         if hasattr(reader,'drdy_chip'):metadata['adc_drdy_chip']=reader.drdy_chip
         if hasattr(reader,'driver'):metadata['scope_resolution_bits']=reader.driver.resolution_bits
         if cancel.is_set():raise InterruptedError('Stop requested')
-        armed=True;supply.prepare_scan(args.voltage_limit,points[0])
+        armed=True;supply.prepare_scan(args.voltage_limit if mode=='current' else points[0],points[0] if mode=='current' else args.max_current)
         seq=[('up',x) for x in points]+([('down',x) for x in reversed(points)] if args.reverse else [])
         with (out/'measurements.csv').open('w',newline='') as f:
             writer=csv.DictWriter(f,fields);writer.writeheader()
-            for index,(direction,current) in enumerate(seq):
+            for index,(direction,setpoint) in enumerate(seq):
                 point_started=time.monotonic()
                 if cancel.is_set():raise InterruptedError('Stop requested')
-                supply.set_current_limit(current)
+                if mode=='current':supply.set_current_limit(setpoint)
+                else:supply.set_voltage(setpoint)
                 if cancel.wait(.02 if args.simulate else args.settle):raise InterruptedError('Stop requested')
                 if pending_raw is not None:pending_raw.result();pending_raw=None
                 before=supply.number('MEAS:CURR?') if hasattr(supply,'number') else supply.readback()[0]
@@ -163,15 +166,20 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                 after,voltage=supply.readback()
                 if not all(math.isfinite(v) for v in (after,voltage)) or after>args.max_current+max(.0001,.02*args.max_current):
                     raise RuntimeError('Invalid or excessive supply readback')
-                measured=(before+after)/2; timestamp=datetime.now(timezone.utc).isoformat();batch=[]
+                measured=(before+after)/2
+                if mode=='voltage' and abs(voltage-setpoint)>max(.005,.02*setpoint):
+                    raise RuntimeError(f'Supply voltage did not reach {setpoint:.5g} V (measured {voltage:.5g} V)')
+                timestamp=datetime.now(timezone.utc).isoformat();batch=[]
                 comment_text,comment_revision=notes.snapshot()
                 futures={m['channel']:processing.submit(summaries,[np.asarray(c[m['channel']],dtype=float) for c in captures]) for m in mappings}
                 for m in mappings:
                     stats=futures[m['channel']].result()
                     row=dict(point=index,direction=direction,timestamp_UTC=timestamp,board=m['board'],
-                        testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],current_set_A=current,
+                        testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],sweep_mode=mode,
+                         voltage_set_V=setpoint if mode=='voltage' else args.voltage_limit,
+                         voltage_measured_V=voltage,voltage_tracking_ok=(abs(voltage-setpoint)<=max(.005,.02*setpoint)) if mode=='voltage' else '',current_set_A=setpoint if mode=='current' else args.max_current,
                         current_measured_A=measured,supply_voltage_V=voltage,
-                        current_tracking_ok=abs(measured-current)<=max(.0001,.02*current),comments=comment_text,comments_revision=comment_revision,**stats)
+                        current_tracking_ok=(abs(measured-setpoint)<=max(.0001,.02*setpoint)) if mode=='current' else '',comments=comment_text,comments_revision=comment_revision,**stats)
                     point=connections.get((m['board'],m['testpoint']))
                     row['positive_endpoint']=endpoint_label(point['positive']) if point else ''
                     row['negative_endpoint']=endpoint_label(point['negative']) if point else ''
@@ -184,7 +192,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                 metadata['completed_points']+=1
                 notes.point_completed(index)
                 if on_point:on_point(batch)
-                print(f'{direction}: {measured*1000:.3f} mA · {len(batch)} mapped inputs',flush=True)
+                print(f'{direction}: {voltage:.4f} V / {measured*1000:.3f} mA · {len(batch)} mapped inputs',flush=True)
         if cancel.is_set():raise InterruptedError('Stop requested')
         metadata['status']='complete'
     except BaseException as exc:
