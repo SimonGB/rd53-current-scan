@@ -118,6 +118,8 @@ def parser():
 
 
 def run(args, supply=None, scope=None):
+    if getattr(args, 'sweep_mode', 'current') != 'current':
+        raise ValueError('Voltage sweep requires mapped station.py or gui.py; standalone scan.py remains current-only')
     points = current_points(args.start, args.stop, args.step)
     positive = ('voltage_limit', 'max_current', 'capture_time', 'sample_rate',
                 'reference_probe', 'output_probe', 'reference_range', 'output_range')
