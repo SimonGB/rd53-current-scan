@@ -29,6 +29,17 @@ def signal_kind(name):
     return name
 
 
+def sweep_mode(rows):
+    return 'voltage' if rows and rows[0].get('sweep_mode')=='voltage' else 'current'
+
+def x_value(row):
+    if row.get('sweep_mode')=='voltage':
+        return float(row.get('voltage_measured_V',row.get('supply_voltage_V',float('nan'))))
+    return float(row['current_measured_A'])*1000
+
+def x_label(rows):
+    return 'Measured supply voltage (V)' if sweep_mode(rows)=='voltage' else 'Measured supply current (mA)'
+
 def voltage_drops(rows):
     """Pair unambiguous local Vin/Vout records at the SAME acquired point."""
     groups = {}
@@ -74,6 +85,13 @@ def load_run(path):
         if missing:
             raise ValueError('Not a mapped measurements CSV; missing: ' + ', '.join(sorted(missing)))
         for number, row in enumerate(reader, start=2):
+            row['sweep_mode']=row.get('sweep_mode') or metadata.get('settings',{}).get('sweep_mode','current')
+            if row['sweep_mode'] not in ('current','voltage'):
+                raise ValueError(f'Invalid sweep mode at CSV line {number}')
+            if row['sweep_mode']=='voltage':
+                raw=row.get('voltage_measured_V') or row.get('supply_voltage_V')
+                if raw in ('',None):raise ValueError(f'Missing voltage reading at CSV line {number}')
+                row['voltage_measured_V']=float(raw)
             try:
                 row['current_measured_A'] = float(row['current_measured_A'])
                 row['mean'] = float(row['mean'])
@@ -94,9 +112,9 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
     boards = list(dict.fromkeys(r['board'] for r in (color_rows or rows)))
     colors = {b: PALETTE[i % len(PALETTE)] for i, b in enumerate(boards)}
     visible = [r for r in rows if r['direction'] == direction
-               and math.isfinite(r['current_measured_A'])
+               and math.isfinite(x_value(r))
                and math.isfinite(r['mean'])
-               and 0 <= r['current_measured_A'] * 1000 <= maximum]
+               and 0 <= x_value(r) <= maximum]
     units = list(dict.fromkeys(r['unit'] for r in visible)) or ['V']
     drops = voltage_drops(visible) if show_difference else []
     panels = len(units) + bool(drops)
@@ -123,7 +141,7 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                 records.sort(key=lambda r: r.get('point', 0))
                 kind = signal_kind(tp)
                 marker = 'o' if kind == 'in' else 's' if kind == 'out' else '^'
-                line, = ax.plot([r['current_measured_A'] * 1000 for r in records],
+                line, = ax.plot([x_value(r) for r in records],
                                 [r['mean'] for r in records], color=colors[board],
                                 linestyle=':' if kind == 'in' else '-', marker=marker,
                                 markersize=3.5, markerfacecolor='none',
@@ -156,7 +174,7 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                                   edgecolor='#627b91' if dark else '#888888', alpha=.92))
             ax.set_title(title, fontsize=14, pad=10)
             ax.set_title(f'{direction.capitalize()} sweep', loc='right', fontsize=11, pad=10)
-            ax.set_xlabel('Measured supply current (mA)')
+            ax.set_xlabel(x_label(rows))
             ax.set_ylabel('Voltage (V)' if unit == 'V' else
                           'Current (A)' if unit == 'A' else f'Measured value ({unit})')
             ax.set_xlim(0, maximum)
@@ -169,13 +187,13 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
             for board in boards:
                 records = sorted((r for r in drops if r['board'] == board), key=lambda r: r['point'])
                 if records:
-                    drop_ax.plot([r['current_measured_A'] * 1000 for r in records],
+                    drop_ax.plot([x_value(r) for r in records],
                                  [r['mean'] for r in records], color=colors[board],
                                  linestyle='-', marker='D', markersize=3,
                                  markerfacecolor='none', linewidth=1.3, label=board)
             drop_ax.set_ylabel(r'$V_\mathrm{in}-V_\mathrm{out}$ (V)')
             drop_ax.set_title('Regulator voltage drop', loc='left', fontsize=11)
-            drop_ax.set_xlabel('Measured supply current (mA)')
+            drop_ax.set_xlabel(x_label(rows))
             drop_ax.set_xlim(0, maximum)
             drop_ax.xaxis.set_minor_locator(AutoMinorLocator(2))
             drop_ax.yaxis.set_minor_locator(AutoMinorLocator(2))
@@ -193,7 +211,7 @@ def export_sweeps(rows, directory, title='5 RD53b in 3 serial domains', maximum=
             continue
         with rc_context(STYLE):
             units = set(r['unit'] for r in rows if r['direction'] == direction)
-            has_drop = show_difference and bool(voltage_drops([r for r in rows if r['direction'] == direction and 0 <= r['current_measured_A']*1000 <= maximum]))
+            has_drop = show_difference and bool(voltage_drops([r for r in rows if r['direction'] == direction and 0 <= x_value(r) <= maximum]))
             figure = Figure(figsize=(7, 4 * (max(1, len(units)) + has_drop)), facecolor='white')
             FigureCanvasAgg(figure)
             draw_sweep(figure, rows, direction, title, maximum, configuration=configuration, show_difference=show_difference, color_rows=color_rows)
@@ -212,12 +230,13 @@ def main():
     parser.add_argument('--configuration', help='Override configuration box text')
     parser.add_argument('--no-configuration', action='store_true', help='Hide the configuration box')
     parser.add_argument('--max-ma', type=float, help='Upper plot limit in mA')
+    parser.add_argument('--max-v', type=float, help='Upper plot voltage limit in V')
     parser.add_argument('--no-difference', action='store_true', help='Hide Vin − Vout subplot')
     parser.add_argument('--output', type=Path, help='Output folder; default is the run folder')
     args = parser.parse_args()
     rows, settings, directory = load_run(args.run)
     title = args.title if args.title is not None else settings.get('plot_title', 'RD53b current scan')
-    maximum = args.max_ma if args.max_ma is not None else float(settings.get('plot_max_ma', 100))
+    maximum = (args.max_v if args.max_v is not None else float(settings.get('plot_max_v',2.0))) if sweep_mode(rows)=='voltage' else (args.max_ma if args.max_ma is not None else float(settings.get('plot_max_ma',100)))
     configuration = (args.configuration if args.configuration is not None
                      else settings.get('plot_configuration', ''))
     if args.no_configuration or (args.configuration is None and settings.get('plot_hide_configuration', False)):
