@@ -569,3 +569,38 @@ The voltage-drop checkbox defaults on for new and old runs. Its state is saved
 in new-run metadata; CLI options `--plot-hide-difference` (scan) and
 `--no-difference` (`sweep_plots.py`) hide the derived panel. If no valid Vin/Vout
 pairs are available in the displayed range, the extra panel is omitted.
+
+
+### Stable sweep controls and four PicoScope inputs (October 2026)
+
+The **Sweep mode** selector offers **Current** and **Voltage** without rearranging
+the scan setup. The Start / Stop / Step fields stay in the same rows and show
+mA or V as appropriate. Each mode remembers its own scan values. In voltage
+mode the **Current limit [mA]** is a fixed protective ceiling; the
+**Maximum voltage [V]** limits the requested voltage range. Set both to
+verified safe values for the connected chip(s) and check the HMP readback.
+
+Live plots use **measured current (mA)** for current scans and **measured
+voltage (V)** for voltage scans. Saved CSV rows include `sweep_mode`,
+`voltage_set_V`, `voltage_measured_V` and `current_measured_A`. A
+reopened run uses its **recorded** sweep mode even if the main GUI has since
+switched to another mode. Empty live charts display the selected axis label.
+
+The PicoScope backend now accepts **one to four distinct BNC channels A–D**
+in the existing wiring editor. For each mapped input set the physical channel,
+probe attenuation and analog range. All selected channels are configured and
+captured in the same block, with individual overflow checks. The PicoScope
+driver retains the older two-channel tuple-returning interface for legacy
+scripts; mapped acquisition uses its dictionary-returning multi-channel mode.
+Depending on the selected channels, timebase and instrument model, the driver
+may need to reduce ADC resolution from 12 to 10 or 8 bits. Verify the reported
+actual resolution and sampling rate before interpreting the noise floor.
+
+**Electrical warning:** Four BNC probes do not provide four isolated grounds.
+The PicoScope input returns are common: never clip them to separate floating
+serial-powering domains. For floating-domain comparisons use correctly rated
+differential/isolated instrumentation instead.
+
+After pulling the update, run `python -m unittest discover -s tests` and use
+**Simulation (no hardware)** for the first voltage sweep. Hardware acquisition
+with four physical Pico probes has not yet been verified.
