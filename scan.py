@@ -56,9 +56,13 @@ class SimSupply:
     def connect(self): pass
     def prepare_scan(self, voltage, current):
         self.voltage, self.current = voltage, current
+        self._voltage_sweep = False
     def set_current_limit(self, current): self.current = current
-    def set_voltage(self, voltage): self.voltage = voltage
-    def readback(self): return min(self.current, self.voltage/20.0), self.voltage
+    def set_voltage(self, voltage):
+        self.voltage = voltage
+        self._voltage_sweep = True
+    def readback(self):
+        return (min(self.current, self.voltage/20.0) if self._voltage_sweep else self.current), self.voltage
     def output_off(self): pass
     def close(self): pass
 
