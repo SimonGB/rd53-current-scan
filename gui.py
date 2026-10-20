@@ -139,10 +139,10 @@ class Window(QMainWindow):
         self.sweep_mode=QComboBox();self.sweep_mode.addItems(['Current','Voltage'])
         self.sweep_mode.setToolTip('Voltage mode sweeps the Hameg voltage setpoint with the configured maximum current enforced as a protective current limit.')
         form.addRow('Sweep mode',self.sweep_mode)
-        self.voltage_fields={}
-        for key,label,value in [('start','Start [V]',0.1),('stop','Stop [V]',1.5),('step','Step [V]',0.05)]:
-            box=QDoubleSpinBox();box.setDecimals(4);box.setRange(.0001,32.0);box.setSingleStep(.01);box.setValue(value)
-            form.addRow(label,box);self.voltage_fields[key]=box
+        # Same controls keep their positions; cache each mode's distinct values.
+        self._last_sweep_mode='Current'
+        self._sweep_presets={'Current':{'start':5.0,'stop':50.0,'step':5.0},
+                             'Voltage':{'start':0.1,'stop':1.5,'step':0.05}}
         self.sweep_mode.currentTextChanged.connect(self.update_sweep_mode)
         self.name=QLineEdit('board1');form.addRow('Run name',self.name)
         self.plot_title=QLineEdit('5 RD53b in 3 serial domains');form.addRow('Plot title',self.plot_title)
@@ -547,21 +547,38 @@ class Window(QMainWindow):
             self.verified.setChecked(False);self.rebuild()
         except Exception as e:QMessageBox.warning(self,'Profile error',str(e))
     def update_sweep_mode(self):
-        voltage=self.sweep_mode.currentText()=='Voltage'
+        """Keep scan settings at stable rows when switching modes."""
+        mode=self.sweep_mode.currentText()
+        previous=self._last_sweep_mode
+        if mode != previous:
+            self._sweep_presets[previous] = {
+                key:self.fields[key].value() for key in ('start','stop','step')
+            }
+        voltage=(mode=='Voltage')
         for key in ('start','stop','step'):
-            for widget,visible in ((self.fields[key],not voltage),(self.voltage_fields[key],voltage)):
-                widget.setVisible(visible)
-                # The corresponding labels are managed by the scan setup form.
-                if hasattr(self,'scan_form'):
-                    self.scan_form.labelForField(widget).setVisible(visible)
-        if hasattr(self,'plot_max_v'):
-            maximum_label=self.scan_form.labelForField(self.fields['max_current'])
-            if maximum_label is not None:
-                maximum_label.setText('Current limit [mA]' if voltage else 'Maximum [mA]')
-            for widget,visible in ((self.plot_max,not voltage),(self.plot_max_v,voltage)):
-                widget.setVisible(visible)
-                if hasattr(self,'scan_form'):self.scan_form.labelForField(widget).setVisible(visible)
-        if hasattr(self,'canvas'):self.redraw()
+            widget=self.fields[key]
+            widget.blockSignals(True)
+            widget.setDecimals(4 if voltage else 3)
+            widget.setRange(0.0001 if voltage else 0.001,32 if voltage else 10000)
+            widget.setSingleStep(0.01 if voltage else 1)
+            widget.setValue(self._sweep_presets[mode][key])
+            widget.blockSignals(False)
+            label=self.scan_form.labelForField(widget)
+            if label is not None:
+                label.setText(key.capitalize()+(' [V]' if voltage else ' [mA]'))
+        maximum_label=self.scan_form.labelForField(self.fields['max_current'])
+        if maximum_label is not None:
+            maximum_label.setText('Current limit [mA]' if voltage else 'Maximum current [mA]')
+        compliance_label=self.scan_form.labelForField(self.fields['voltage_limit'])
+        if compliance_label is not None:
+            compliance_label.setText('Maximum voltage [V]' if voltage else 'Compliance [V]')
+        self.plot_max.setEnabled(not voltage)
+        self.plot_max_v.setEnabled(voltage)
+        self._last_sweep_mode=mode
+        if hasattr(self,'canvas'):
+            self.redraw()
+        if hasattr(self,'eta'):
+            self.reset_eta()
 
     def start(self):
         if self.running or getattr(self,'abort_dialog',None):return
@@ -569,7 +586,7 @@ class Window(QMainWindow):
             p=validate_profile(active_profile(self.snapshot()))
             if not self.sim.isChecked() and not self.verified.isChecked():raise ValueError('Check physical wiring and safe limits before a hardware scan')
             voltage_mode=self.sweep_mode.currentText()=='Voltage'
-            points=self.voltage_fields if voltage_mode else self.fields
+            points=self.fields
             divisor=1 if voltage_mode else 1000
             argv=['--sweep-mode','voltage' if voltage_mode else 'current',
                   '--start',str(points['start'].value()/divisor),'--stop',str(points['stop'].value()/divisor),
