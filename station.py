@@ -43,15 +43,15 @@ class MappedPico:
     identity='PicoScope PS6000A'
     def __init__(self,args,mappings):
         from picoscope import PicoScope
-        a,b=mappings
-        self.driver=PicoScope(input_channel=a['channel'],output_channel=b['channel'],
-            input_range=a['range'],output_range=b['range'],input_probe=a['probe'],output_probe=b['probe'],
+        configs={m['channel']:{'range':m['range'],'probe':m['probe']}
+                 for m in mappings}
+        self.driver=PicoScope(channels=configs,
             resolution_bits=args.resolution,sample_rate=args.sample_rate,capture_time=args.capture_time)
-        self.channels=[a['channel'],b['channel']]
+        self.channels=list(configs)
     def connect(self):self.driver.connect()
     @property
     def sample_interval(self):return self.driver.sample_interval
-    def capture(self):return dict(zip(self.channels,self.driver.capture()))
+    def capture(self):return self.driver.capture()
     def close(self):self.driver.close()
 
 
