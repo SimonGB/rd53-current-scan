@@ -7,6 +7,7 @@ negative charge-pump output by default. Both channels use DC coupling and
 """
 
 import time
+import math
 from ctypes import (
     byref,
     c_double,
@@ -79,6 +80,7 @@ class PicoScope:
         bandwidth_limit="20MHz",
         sample_rate=10_000_000,
         capture_time=0.02,
+        channels=None,
     ):
         self.handle = c_int16()
         self.connected = False
@@ -98,6 +100,25 @@ class PicoScope:
 
         self.input_probe = float(input_probe)
         self.output_probe = float(output_probe)
+        self.mapped_channels = channels is not None
+        if channels is None:
+            channels = {
+                self.input_channel_name: {'range': self.input_range, 'probe': self.input_probe},
+                self.output_channel_name: {'range': self.output_range, 'probe': self.output_probe},
+            }
+        if not isinstance(channels, dict) or not (1 <= len(channels) <= 4):
+            raise ValueError('Expected 1 to 4 Pico channel configurations')
+        self.channel_settings = {}
+        for name, settings in channels.items():
+            name = str(name).strip().upper()
+            if name not in 'ABCD' or len(name) != 1 or name in self.channel_settings:
+                raise ValueError('PicoScope 6426E channels must be unique A..D')
+            vrange = float(settings['range'])
+            probe = float(settings['probe'])
+            if not math.isfinite(probe) or probe <= 0:
+                raise ValueError(f'Invalid probe factor for {name}')
+            self.channel_settings[name] = dict(channel=_channel_to_enum(name),
+                range=vrange, range_enum=_range_to_enum(vrange), probe=probe)
         self.requested_resolution_bits = int(resolution_bits)
         self.resolution_bits = int(resolution_bits)
         self.allow_resolution_fallback = bool(allow_resolution_fallback)
@@ -184,30 +205,14 @@ class PicoScope:
     def configure(self):
         coupling = picoEnum.PICO_COUPLING["PICO_DC"]
 
-        status = ps6000a.ps6000aSetChannelOn(
-            self.handle,
-            self.input_channel,
-            coupling,
-            self.input_range_enum,
-            0.0,
-            self.bandwidth,
-        )
-        self.check(status, f"Channel {self.input_channel_name}")
-
-        status = ps6000a.ps6000aSetChannelOn(
-            self.handle,
-            self.output_channel,
-            coupling,
-            self.output_range_enum,
-            0.0,
-            self.bandwidth,
-        )
-        self.check(status, f"Channel {self.output_channel_name}")
-
-        enabled_channels = (
-            (1 << self.input_channel)
-            | (1 << self.output_channel)
-        )
+        enabled_channels = 0
+        for name, setting in self.channel_settings.items():
+            status = ps6000a.ps6000aSetChannelOn(
+                self.handle, setting['channel'], coupling, setting['range_enum'],
+                0.0, self.bandwidth,
+            )
+            self.check(status, f'Channel {name}')
+            enabled_channels |= 1 << setting['channel']
         self.enabled_channels = enabled_channels
         requested_interval = 1.0 / self.sample_rate
         timebase, available_interval = self._select_timebase(
@@ -319,8 +324,8 @@ class PicoScope:
                     print(
                         "PicoScope warning: "
                         f"{self.requested_resolution_bits}-bit mode is not "
-                        f"valid for channels {self.input_channel_name}+"
-                        f"{self.output_channel_name}; using {bits}-bit mode."
+                        f"valid for channels {'+'.join(self.channel_settings)}; "
+                        f"using {bits}-bit mode."
                     )
                 return timebase, available_interval
 
@@ -416,34 +421,19 @@ class PicoScope:
             sample_rate=sample_rate,
             max_samples=max_samples,
         )
-        buffer_a = np.zeros(samples, dtype=np.int16)
-        buffer_b = np.zeros(samples, dtype=np.int16)
+        buffers = {name: np.zeros(samples, dtype=np.int16)
+                   for name in self.channel_settings}
 
         first_action = self.clear_all | self.add
 
-        status = ps6000a.ps6000aSetDataBuffer(
-            self.handle,
-            self.input_channel,
-            buffer_a.ctypes.data_as(c_void_p),
-            samples,
-            self.data_type,
-            0,
-            self.ratio_mode,
-            first_action,
-        )
-        self.check(status, f"Channel {self.input_channel_name} buffer")
-
-        status = ps6000a.ps6000aSetDataBuffer(
-            self.handle,
-            self.output_channel,
-            buffer_b.ctypes.data_as(c_void_p),
-            samples,
-            self.data_type,
-            0,
-            self.ratio_mode,
-            self.add,
-        )
-        self.check(status, f"Channel {self.output_channel_name} buffer")
+        for index, (name, setting) in enumerate(self.channel_settings.items()):
+            status = ps6000a.ps6000aSetDataBuffer(
+                self.handle, setting['channel'],
+                buffers[name].ctypes.data_as(c_void_p), samples,
+                self.data_type, 0, self.ratio_mode,
+                first_action if index == 0 else self.add,
+            )
+            self.check(status, f'Channel {name} buffer')
 
         time_indisposed = c_double()
         status = ps6000a.ps6000aRunBlock(
@@ -496,36 +486,22 @@ class PicoScope:
         )
         self.check(status, "GetValues")
 
-        overflowed = []
-        for name, channel in (
-            (self.input_channel_name, self.input_channel),
-            (self.output_channel_name, self.output_channel),
-        ):
-            if overflow.value & (1 << channel):
-                overflowed.append(name)
-
+        overflowed = [name for name, setting in self.channel_settings.items()
+                      if overflow.value & (1 << setting['channel'])]
         if overflowed:
-            channels = ", ".join(overflowed)
             raise RuntimeError(
-                f"PicoScope over-range on channel(s) {channels}. "
-                "Increase the corresponding range in config.py."
+                f"PicoScope over-range on channel(s) {', '.join(overflowed)}. "
+                "Increase the corresponding BNC range before measuring."
             )
-
         count = n_samples.value
-        voltage_in = (
-            buffer_a[:count].astype(np.float64)
-            / self.adc_max
-            * self.input_range
-            * self.input_probe
-        )
-        voltage_out = (
-            buffer_b[:count].astype(np.float64)
-            / self.adc_max
-            * self.output_range
-            * self.output_probe
-        )
-
-        return voltage_in, voltage_out
+        voltage = {
+            name: (buffers[name][:count].astype(np.float64)
+                   / self.adc_max * setting['range'] * setting['probe'])
+            for name, setting in self.channel_settings.items()
+        }
+        if self.mapped_channels:
+            return voltage
+        return voltage[self.input_channel_name], voltage[self.output_channel_name]
 
     #######################################################################
     # Shutdown
