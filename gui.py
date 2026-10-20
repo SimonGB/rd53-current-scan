@@ -646,6 +646,16 @@ class Window(QMainWindow):
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
         self.estimate_state='done' if ok else 'stopped';self.update_eta();self.sync_overview()
         self.readout.setText(text);self.readout.setToolTip(text)
+    def plot_axis_mode(self, rows=None):
+        """Use the acquisition's recorded mode, not a later mode-selector edit."""
+        rows=self.rows if rows is None else rows
+        if rows:
+            return 'voltage' if rows[0].get('sweep_mode')=='voltage' else 'current'
+        return self.sweep_mode.currentText().lower()
+
+    def plot_limit(self, rows=None):
+        return self.plot_max_v.value() if self.plot_axis_mode(rows)=='voltage' else self.plot_max.value()
+
     def save_plots(self):
         """Save visible up/down sweeps as PNG/PDF without a new measurement."""
         rows = self.rows if self.plotall.isChecked() else [
@@ -674,7 +684,7 @@ class Window(QMainWindow):
                 return
         try:
             export_sweeps(
-                rows, output, self.plot_title.text(), self.plot_max_v.value() if self.sweep_mode.currentText()=='Voltage' else self.plot_max.value(),
+                rows, output, self.plot_title.text(), self.plot_limit(rows),
                 self.plot_configuration.text() if self.show_configuration.isChecked() else '',
                 show_difference=self.show_difference.isChecked(), color_rows=self.rows)
             QMessageBox.information(self, 'Plots saved', f'PNG and PDF plots saved to:\n{output}')
@@ -697,7 +707,7 @@ class Window(QMainWindow):
             return
         visible=self.rows if self.plotall.isChecked() else [r for r in self.rows if r['board']==self.boardselect.currentText()]
         for direction,figure,canvas in [('up',self.figure,self.canvas),('down',self.down_figure,self.down_canvas)]:
-            draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_max_v.value() if self.sweep_mode.currentText()=='Voltage' else self.plot_max.value(),color_rows=self.rows,configuration=self.plot_configuration.text() if self.show_configuration.isChecked() else "",dark=True,show_difference=self.show_difference.isChecked())
+            draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_limit(self.rows),color_rows=self.rows,configuration=self.plot_configuration.text() if self.show_configuration.isChecked() else "",dark=True,show_difference=self.show_difference.isChecked(),mode_hint=self.plot_axis_mode())
             canvas.setMinimumHeight(260 * len(figure.axes))
             canvas.draw_idle()
     def closeEvent(self,event):
