@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                             QMessageBox, QScrollArea, QWidget)
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from sweep_plots import load_run, draw_sweep, export_sweeps
+from sweep_plots import load_run, draw_sweep, export_sweeps, sweep_mode
 
 
 class HistoryViewer(QDialog):
@@ -34,9 +34,10 @@ class HistoryViewer(QDialog):
         controls.addRow(options)
         self.maximum = QDoubleSpinBox();self.maximum.setDecimals(3)
         self.maximum.setRange(.001, 10000)
-        maximum = float(settings.get('plot_max_ma', 100))
+        self.mode=sweep_mode(self.rows)
+        maximum = float(settings.get('plot_max_v',2.0) if self.mode=='voltage' else settings.get('plot_max_ma',100))
         self.maximum.setValue(maximum if math.isfinite(maximum) and maximum > 0 else 100)
-        controls.addRow('Plot maximum [mA]', self.maximum)
+        controls.addRow('Plot maximum [V]' if self.mode=='voltage' else 'Plot maximum [mA]', self.maximum)
         self.board = QComboBox();self.board.addItem('All boards', None)
         for board in dict.fromkeys(r['board'] for r in self.rows):
             self.board.addItem(board, board)
