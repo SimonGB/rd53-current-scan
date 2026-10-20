@@ -37,8 +37,9 @@ def x_value(row):
         return float(row.get('voltage_measured_V',row.get('supply_voltage_V',float('nan'))))
     return float(row['current_measured_A'])*1000
 
-def x_label(rows):
-    return 'Measured supply voltage (V)' if sweep_mode(rows)=='voltage' else 'Measured supply current (mA)'
+def x_label(rows, mode_hint=None):
+    mode=sweep_mode(rows) if rows else mode_hint
+    return 'Measured supply voltage (V)' if mode=='voltage' else 'Measured supply current (mA)'
 
 def voltage_drops(rows):
     """Pair unambiguous local Vin/Vout records at the SAME acquired point."""
@@ -106,7 +107,7 @@ def load_run(path):
     return rows, metadata.get('settings', {}), directory
 
 
-def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, configuration="", dark=False, show_difference=True):
+def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, configuration="", dark=False, show_difference=True, mode_hint=None):
     """One figure per direction; separate axes for different physical units."""
     figure.clear()
     boards = list(dict.fromkeys(r['board'] for r in (color_rows or rows)))
@@ -174,7 +175,7 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                                   edgecolor='#627b91' if dark else '#888888', alpha=.92))
             ax.set_title(title, fontsize=14, pad=10)
             ax.set_title(f'{direction.capitalize()} sweep', loc='right', fontsize=11, pad=10)
-            ax.set_xlabel(x_label(rows))
+            ax.set_xlabel(x_label(rows, mode_hint))
             ax.set_ylabel('Voltage (V)' if unit == 'V' else
                           'Current (A)' if unit == 'A' else f'Measured value ({unit})')
             ax.set_xlim(0, maximum)
@@ -193,7 +194,7 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                                  markerfacecolor='none', linewidth=1.3, label=board)
             drop_ax.set_ylabel(r'$V_\mathrm{in}-V_\mathrm{out}$ (V)')
             drop_ax.set_title('Regulator voltage drop', loc='left', fontsize=11)
-            drop_ax.set_xlabel(x_label(rows))
+            drop_ax.set_xlabel(x_label(rows, mode_hint))
             drop_ax.set_xlim(0, maximum)
             drop_ax.xaxis.set_minor_locator(AutoMinorLocator(2))
             drop_ax.yaxis.set_minor_locator(AutoMinorLocator(2))
