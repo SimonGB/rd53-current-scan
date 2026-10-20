@@ -27,7 +27,7 @@ from scan import parser
 from station import run_mapped
 from run_comments import RunComments
 from board_overview import BoardOverview
-from sweep_plots import draw_sweep
+from sweep_plots import draw_sweep, export_sweeps
 from history_viewer import HistoryViewer
 from progress_estimate import ProgressEstimate,duration
 from board_setup import add_boards,auto_assign,delete_testpoint,active_profile
@@ -149,6 +149,11 @@ class Window(QMainWindow):
         self.show_difference.toggled.connect(self.redraw)
         self.plot_max=QDoubleSpinBox();self.plot_max.setRange(.001,10000);self.plot_max.setValue(100);form.addRow('Plot maximum [mA]',self.plot_max)
         self.plot_title.textChanged.connect(self.redraw);self.plot_max.valueChanged.connect(self.redraw)
+        self.save_plots_button=QPushButton('Save Plots…')
+        self.save_plots_button.setToolTip('Export currently displayed plots to PNG and PDF after editing the title or configuration.')
+        self.save_plots_button.clicked.connect(self.save_plots)
+        self.save_plots_button.setEnabled(False)
+        form.addRow(self.save_plots_button)
         notespage=QWidget();noteslayout=QVBoxLayout(notespage)
         noteslabel=QLabel('Edit comments during the scan — saved immediately with timestamped revisions.');noteslabel.setWordWrap(True);noteslayout.addWidget(noteslabel)
         self.comments=QPlainTextEdit();self.comments.setPlaceholderText('Board ID, wiring changes, temperature, observations, unusual behaviour…')
@@ -543,7 +548,7 @@ class Window(QMainWindow):
             args.captures=self.captures.value();args.reverse=self.reverse.isChecked();args.simulate=self.sim.isChecked();args.save_waveforms=self.raw.isChecked()
             from scan import current_points
             count=len(current_points(args.start,args.stop,args.step))*(2 if args.reverse else 1)
-            self.progress.setRange(0,count);self.progress.setValue(0);self.rows=[];self.redraw();self.running=True
+            self.progress.setRange(0,count);self.progress.setValue(0);self.rows=[];self.save_plots_button.setEnabled(False);self.redraw();self.running=True
             self.clock=self.new_estimate();self.clock.start(time.monotonic());self.estimate_state='running';self.update_eta();self.sync_overview()
             for card in self.overview.cards.values():card.status.setText('Waiting for data…')
             self.table.setEnabled(False);self.backend.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
@@ -586,12 +591,47 @@ class Window(QMainWindow):
         text=' | '.join(f"{r['board']} {r['testpoint']}: {r['mean']:.5f} {r['unit']} · σ={r['sample_std']:.5g}" for r in batch)
         selected=[r for r in batch if r['board']==self.boardselect.currentText()]
         summary=' | '.join(f"{r['testpoint']}: {r['mean']:.5f} {r['unit']}" for r in selected)
-        self.readout.setText(f"{len(batch)} inputs · "+summary);self.readout.setToolTip(text);self.log.appendPlainText(text);self.redraw()
+        self.readout.setText(f"{len(batch)} inputs · "+summary);self.readout.setToolTip(text);self.log.appendPlainText(text);self.save_plots_button.setEnabled(bool(self.rows));self.redraw()
     def finished(self,text,ok):
         self.running=False;self.comments.setReadOnly(False);self.startbtn.setEnabled(not bool(getattr(self,'abort_dialog',None)));self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True)
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
         self.estimate_state='done' if ok else 'stopped';self.update_eta();self.sync_overview()
         self.readout.setText(text);self.readout.setToolTip(text)
+    def save_plots(self):
+        """Save visible up/down sweeps as PNG/PDF without a new measurement."""
+        rows = self.rows if self.plotall.isChecked() else [
+            r for r in self.rows if r['board'] == self.boardselect.currentText()
+        ]
+        if not rows:
+            QMessageBox.information(self, 'No measurements', 'No measurements to save yet.')
+            return
+        folder = QFileDialog.getExistingDirectory(self, 'Save plots to folder', 'results')
+        if not folder:
+            return
+        output = Path(folder)
+        existing = [f'mapped_voltages_{direction}.{ext}'
+                    for direction in ('up', 'down')
+                    if any(r['direction'] == direction for r in rows)
+                    for ext in ('png', 'pdf')
+                    if (output / f'mapped_voltages_{direction}.{ext}').exists()]
+        if existing:
+            response = QMessageBox.question(
+                self, 'Replace existing plots?',
+                'These files already exist and would be replaced:\\n' +
+                '\\n'.join(existing) + '\\n\\nContinue?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if response != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            export_sweeps(
+                rows, output, self.plot_title.text(), self.plot_max.value(),
+                self.plot_configuration.text() if self.show_configuration.isChecked() else '',
+                show_difference=self.show_difference.isChecked(), color_rows=self.rows)
+            QMessageBox.information(self, 'Plots saved', f'PNG and PDF plots saved to:\\n{output}')
+        except Exception as exc:
+            QMessageBox.warning(self, 'Cannot save plots', str(exc))
+
     def open_history(self):
         path,_=QFileDialog.getOpenFileName(self,'Open saved run','results','Run data (metadata.json measurements.csv);;JSON/CSV (*.json *.csv)')
         if not path:return
