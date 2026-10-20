@@ -57,7 +57,8 @@ class SimSupply:
     def prepare_scan(self, voltage, current):
         self.voltage, self.current = voltage, current
     def set_current_limit(self, current): self.current = current
-    def readback(self): return self.current, min(self.voltage, 1.2)
+    def set_voltage(self, voltage): self.voltage = voltage
+    def readback(self): return min(self.current, self.voltage/20.0), self.voltage
     def output_off(self): pass
     def close(self): pass
 
@@ -78,6 +79,7 @@ class SimScope:
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--sweep-mode', choices=('current','voltage'), default='current')
     p.add_argument('--start', type=float, required=True, help='Starting current [A], >0')
     p.add_argument('--stop', type=float, required=True, help='Maximum current [A]')
     p.add_argument('--step', type=float, required=True, help='Current step [A]')
@@ -105,6 +107,7 @@ def parser():
     p.add_argument('--plot-hide-configuration', action='store_true', help='Hide configuration note but retain its text in metadata')
     p.add_argument('--plot-configuration', default='3 serial domains: Boards (1 & 2) → (3 & 4) → 5', help='Configuration box text; empty hides it')
     p.add_argument('--plot-max-ma', type=float, default=100, help='Plot upper current limit [mA]')
+    p.add_argument('--plot-max-v', type=float, default=2.0, help='Plot upper voltage limit [V]')
     p.add_argument('--name', default='rd53_v2')
     p.add_argument('--output', type=Path, default=Path('results'))
     return p
