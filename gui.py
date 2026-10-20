@@ -124,7 +124,7 @@ class Window(QMainWindow):
         side=QWidget();side.setMinimumWidth(335);side.setMaximumWidth(450);sideLayout=QVBoxLayout(side);sideLayout.setContentsMargins(0,0,0,0)
         scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(left);sideLayout.addWidget(scroll);splitter.addWidget(side)
         tabs=QTabWidget();ll.addWidget(tabs)
-        setup=QWidget();form=QFormLayout(setup);tabs.addTab(setup,'Scan setup')
+        setup=QWidget();form=QFormLayout(setup);self.scan_form=form;tabs.addTab(setup,'Scan setup')
         self.backend=QComboBox();self.backend.addItems(['pico','venelin']);form.addRow('Measurement source',self.backend)
         self.port=QLineEdit('/dev/hmp4040-1');form.addRow('Hameg serial port',self.port)
         self.hmp=QSpinBox();self.hmp.setRange(1,4);self.hmp.setValue(2);form.addRow('Hameg channel',self.hmp)
@@ -136,6 +136,13 @@ class Window(QMainWindow):
             box=QDoubleSpinBox();box.setDecimals(decimals);box.setRange(0,maximum);box.setValue(value)
             self.fields[name]=box;form.addRow(label,box)
         self.captures=QSpinBox();self.captures.setRange(1,10000);self.captures.setValue(10);form.addRow('Captures per point',self.captures)
+        self.sweep_mode=QComboBox();self.sweep_mode.addItems(['Current','Voltage'])
+        form.addRow('Sweep mode',self.sweep_mode)
+        self.voltage_fields={}
+        for key,label,value in [('start','Start [V]',0.1),('stop','Stop [V]',1.5),('step','Step [V]',0.05)]:
+            box=QDoubleSpinBox();box.setDecimals(4);box.setRange(.0001,32.0);box.setSingleStep(.01);box.setValue(value)
+            form.addRow(label,box);self.voltage_fields[key]=box
+        self.sweep_mode.currentTextChanged.connect(self.update_sweep_mode)
         self.name=QLineEdit('board1');form.addRow('Run name',self.name)
         self.plot_title=QLineEdit('5 RD53b in 3 serial domains');form.addRow('Plot title',self.plot_title)
         self.plot_configuration=QLineEdit('3 serial domains: Boards (1 & 2) → (3 & 4) → 5');form.addRow('Configuration',self.plot_configuration)
@@ -148,6 +155,9 @@ class Window(QMainWindow):
         self.show_difference.setToolTip('Regulator voltage drop, not shunted current. Requires Vin and Vout at the same point.')
         self.show_difference.toggled.connect(self.redraw)
         self.plot_max=QDoubleSpinBox();self.plot_max.setRange(.001,10000);self.plot_max.setValue(100);form.addRow('Plot maximum [mA]',self.plot_max)
+        self.plot_max_v=QDoubleSpinBox();self.plot_max_v.setRange(.001,32);self.plot_max_v.setDecimals(3);self.plot_max_v.setValue(2.0);form.addRow('Plot maximum [V]',self.plot_max_v)
+        self.plot_max_v.valueChanged.connect(self.redraw)
+        self.update_sweep_mode()
         self.plot_title.textChanged.connect(self.redraw);self.plot_max.valueChanged.connect(self.redraw)
         self.save_plots_button=QPushButton('Save Plots…')
         self.save_plots_button.setToolTip('Export currently displayed plots to PNG and PDF after editing the title or configuration.')
@@ -535,15 +545,33 @@ class Window(QMainWindow):
             self.fields['sample_rate'].setValue(1000 if p['backend']=='venelin' else 1000000)
             self.verified.setChecked(False);self.rebuild()
         except Exception as e:QMessageBox.warning(self,'Profile error',str(e))
+    def update_sweep_mode(self):
+        voltage=self.sweep_mode.currentText()=='Voltage'
+        for key in ('start','stop','step'):
+            for widget,visible in ((self.fields[key],not voltage),(self.voltage_fields[key],voltage)):
+                widget.setVisible(visible)
+                # The corresponding labels are managed by the scan setup form.
+                if hasattr(self,'scan_form'):
+                    self.scan_form.labelForField(widget).setVisible(visible)
+        if hasattr(self,'plot_max_v'):
+            for widget,visible in ((self.plot_max,not voltage),(self.plot_max_v,voltage)):
+                widget.setVisible(visible)
+                if hasattr(self,'scan_form'):self.scan_form.labelForField(widget).setVisible(visible)
+        if hasattr(self,'canvas'):self.redraw()
+
     def start(self):
         if self.running or getattr(self,'abort_dialog',None):return
         try:
             p=validate_profile(active_profile(self.snapshot()))
             if not self.sim.isChecked() and not self.verified.isChecked():raise ValueError('Check physical wiring and safe limits before a hardware scan')
-            argv=['--start',str(self.fields['start'].value()/1000),'--stop',str(self.fields['stop'].value()/1000),
-                  '--step',str(self.fields['step'].value()/1000),'--max-current',str(self.fields['max_current'].value()/1000),
+            voltage_mode=self.sweep_mode.currentText()=='Voltage'
+            points=self.voltage_fields if voltage_mode else self.fields
+            divisor=1 if voltage_mode else 1000
+            argv=['--sweep-mode','voltage' if voltage_mode else 'current',
+                  '--start',str(points['start'].value()/divisor),'--stop',str(points['stop'].value()/divisor),
+                  '--step',str(points['step'].value()/divisor),'--max-current',str(self.fields['max_current'].value()/1000),
                   '--voltage-limit',str(self.fields['voltage_limit'].value())]
-            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.plot_title=self.plot_title.text();args.plot_configuration=self.plot_configuration.text();args.plot_hide_configuration=not self.show_configuration.isChecked();args.plot_hide_difference=not self.show_difference.isChecked();args.plot_max_ma=self.plot_max.value();args.comments=self.comments.toPlainText()
+            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.plot_title=self.plot_title.text();args.plot_configuration=self.plot_configuration.text();args.plot_hide_configuration=not self.show_configuration.isChecked();args.plot_hide_difference=not self.show_difference.isChecked();args.plot_max_ma=self.plot_max.value();args.plot_max_v=self.plot_max_v.value();args.comments=self.comments.toPlainText()
             for n in ('settle','capture_time','sample_rate'):setattr(args,n,self.fields[n].value())
             args.captures=self.captures.value();args.reverse=self.reverse.isChecked();args.simulate=self.sim.isChecked();args.save_waveforms=self.raw.isChecked()
             from scan import current_points
@@ -625,7 +653,7 @@ class Window(QMainWindow):
                 return
         try:
             export_sweeps(
-                rows, output, self.plot_title.text(), self.plot_max.value(),
+                rows, output, self.plot_title.text(), self.plot_max_v.value() if self.sweep_mode.currentText()=='Voltage' else self.plot_max.value(),
                 self.plot_configuration.text() if self.show_configuration.isChecked() else '',
                 show_difference=self.show_difference.isChecked(), color_rows=self.rows)
             QMessageBox.information(self, 'Plots saved', f'PNG and PDF plots saved to:\n{output}')
@@ -648,7 +676,7 @@ class Window(QMainWindow):
             return
         visible=self.rows if self.plotall.isChecked() else [r for r in self.rows if r['board']==self.boardselect.currentText()]
         for direction,figure,canvas in [('up',self.figure,self.canvas),('down',self.down_figure,self.down_canvas)]:
-            draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_max.value(),color_rows=self.rows,configuration=self.plot_configuration.text() if self.show_configuration.isChecked() else "",dark=True,show_difference=self.show_difference.isChecked())
+            draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_max_v.value() if self.sweep_mode.currentText()=='Voltage' else self.plot_max.value(),color_rows=self.rows,configuration=self.plot_configuration.text() if self.show_configuration.isChecked() else "",dark=True,show_difference=self.show_difference.isChecked())
             canvas.setMinimumHeight(260 * len(figure.axes))
             canvas.draw_idle()
     def closeEvent(self,event):
