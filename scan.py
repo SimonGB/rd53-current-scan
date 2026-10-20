@@ -62,7 +62,9 @@ class SimSupply:
         self.voltage = voltage
         self._voltage_sweep = True
     def readback(self):
-        return (min(self.current, self.voltage/20.0) if self._voltage_sweep else self.current), self.voltage
+        if self._voltage_sweep:
+            return min(self.current, self.voltage/20.0), self.voltage
+        return self.current, min(self.voltage, 1.2)
     def output_off(self): pass
     def close(self): pass
 
