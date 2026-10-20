@@ -137,6 +137,7 @@ class Window(QMainWindow):
             self.fields[name]=box;form.addRow(label,box)
         self.captures=QSpinBox();self.captures.setRange(1,10000);self.captures.setValue(10);form.addRow('Captures per point',self.captures)
         self.sweep_mode=QComboBox();self.sweep_mode.addItems(['Current','Voltage'])
+        self.sweep_mode.setToolTip('Voltage mode sweeps the Hameg voltage setpoint with the configured maximum current enforced as a protective current limit.')
         form.addRow('Sweep mode',self.sweep_mode)
         self.voltage_fields={}
         for key,label,value in [('start','Start [V]',0.1),('stop','Stop [V]',1.5),('step','Step [V]',0.05)]:
@@ -554,6 +555,9 @@ class Window(QMainWindow):
                 if hasattr(self,'scan_form'):
                     self.scan_form.labelForField(widget).setVisible(visible)
         if hasattr(self,'plot_max_v'):
+            maximum_label=self.scan_form.labelForField(self.fields['max_current'])
+            if maximum_label is not None:
+                maximum_label.setText('Current limit [mA]' if voltage else 'Maximum [mA]')
             for widget,visible in ((self.plot_max,not voltage),(self.plot_max_v,voltage)):
                 widget.setVisible(visible)
                 if hasattr(self,'scan_form'):self.scan_form.labelForField(widget).setVisible(visible)
