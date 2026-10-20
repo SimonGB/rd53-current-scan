@@ -49,8 +49,8 @@ def validate_profile(profile):
         for n in ('probe','range'):
             if not math.isfinite(float(m.get(n,1))) or float(m.get(n,1))<=0:
                 raise ValueError('Probe factor and range must be positive')
-    if profile['backend']=='pico' and len(mappings)!=2:
-        raise ValueError('Current Pico backend supports exactly two mapped inputs')
+    if profile['backend']=='pico' and not 1 <= len(mappings) <= 4:
+        raise ValueError('PicoScope supports 1 to 4 mapped inputs (A–D)')
     return profile
 
 
