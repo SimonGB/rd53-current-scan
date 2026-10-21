@@ -98,7 +98,7 @@ class RextCompareWindow(QDialog):
         plot_form.addRow('Plot max current [mA]', self.plot_limit)
 
         self.fit = QCheckBox('Draw fitted lines on overlay')
-        self.fit.setChecked(True)
+        self.fit.setChecked(False)
         self.fit.toggled.connect(self.update_preview)
         plot_form.addRow(self.fit)
 
