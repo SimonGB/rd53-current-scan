@@ -10,7 +10,7 @@ import numpy as np
 
 from rext_compare import (
     parse_configuration, discover, families, signal_choices, trace,
-    fit_trace, compare, save_comparison,
+    fit_trace, compare, plot_fit_parameters, save_comparison,
 )
 
 
@@ -64,15 +64,25 @@ class RextCompareTests(unittest.TestCase):
             fit=fit_trace(x,y,min_ma=10,max_ma=90,max_voltage=2)
             self.assertAlmostEqual(fit['slope_ohm'],.65,places=5)
             self.assertAlmostEqual(fit['offset_v'],.6,places=5)
+            self.assertIn('slope_error_ohm',fit)
+            self.assertIn('offset_error_v',fit)
             figure, fits=compare(selected,'Vin',fit=True,fit_min_ma=10,
                                  fit_max_ma=90,fit_max_voltage=2)
             self.assertEqual(len(fits),3)
             self.assertEqual(len(figure.axes[0].lines),6)
+            summary = plot_fit_parameters(fits)
+            self.assertEqual(len(summary.axes),2)
+            self.assertIn('slope',summary.axes[0].get_ylabel())
+            self.assertIn('ofs',summary.axes[1].get_ylabel())
+            self.assertEqual(len(summary.axes[0].containers),1)
+            self.assertEqual(len(summary.axes[0].containers[0].lines[0].get_xdata()),3)
             self.assertEqual(figure.axes[0].get_xlabel(),'Measured input current (mA)')
             files_before={d:(d/'measurements.csv').read_bytes() for d in folders}
             dest=root/'published'
             save_comparison(figure,fits,dest)
-            for filename in ('rext_comparison.png','rext_comparison.pdf','rext_fit_results.csv'):
+            for filename in ('rext_comparison.png','rext_comparison.pdf',
+                             'rext_fit_parameters.png','rext_fit_parameters.pdf',
+                             'rext_fit_results.csv'):
                 self.assertTrue((dest/filename).is_file(),filename)
             for d,old in files_before.items():
                 self.assertEqual((d/'measurements.csv').read_bytes(),old)
@@ -130,9 +140,34 @@ class RextCompareTests(unittest.TestCase):
             try:
                 self.assertEqual(window.runs.rowCount(), 2)
                 self.assertIsNotNone(window.last_figure)
+                self.assertEqual(len(window.parameters_figure.axes),2)
                 self.assertEqual(len(window.figure.axes[0].lines), 2)
             finally:
                 window.close()
+
+    def test_parameter_figure_skips_failed_fits_and_keeps_repeated_rext(self):
+        entries = [
+            dict(rext_ohm=600, run='first', status='ok', slope_ohm=1.2,
+                 slope_error_ohm=.1, offset_v=1.8, offset_error_v=.02),
+            dict(rext_ohm=600, run='second', status='ok', slope_ohm=1.4,
+                 slope_error_ohm=.2, offset_v=1.7, offset_error_v=.03),
+            dict(rext_ohm=900, run='third', status='not enough points')
+        ]
+        from matplotlib.figure import Figure
+        canvas = Figure()
+        result = plot_fit_parameters(entries, figure=canvas)
+        self.assertIs(result,canvas)
+        self.assertEqual(len(result.axes),2)
+        self.assertEqual(list(result.axes[0].containers[0].lines[0].get_xdata()),[600,600])
+        self.assertEqual(list(result.axes[1].containers[0].lines[0].get_ydata()),[1.8,1.7])
+
+    def test_linear_parameter_uncertainties_finite(self):
+        currents = np.linspace(.01,.08,15)
+        values = 4.2 * currents + .8 + .004 * np.sin(np.arange(len(currents)))
+        fit = fit_trace(currents, values, min_ma=10, max_ma=80)
+        self.assertAlmostEqual(fit['slope_ohm'],4.2,delta=.1)
+        self.assertGreater(fit['slope_error_ohm'],0)
+        self.assertGreater(fit['offset_error_v'],0)
 
 
 if __name__=='__main__':
