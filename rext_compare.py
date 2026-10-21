@@ -1,8 +1,8 @@
-"""Compare RD53 input-current sweeps while varying external resistor Rext.
+"""Compare RD53 input-current sweeps while varying Rext or configured offset voltage.
 
 Runs are discovered recursively from results/<run-name>/<timestamp>/measurements.csv.
 The acquisition's original plot_configuration (metadata.json) is used to find
-Rext; saved presentation changes do not silently reclassify a measurement.
+Rext or Voffset; saved presentation changes do not silently reclassify a measurement.
 No hardware is accessed. The original run data is never modified.
 """
 from __future__ import annotations
