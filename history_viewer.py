@@ -19,17 +19,6 @@ class HistoryViewer(QDialog):
     def __init__(self, path, parent=None):
         super().__init__(parent)
         self.rows, settings, self.directory = load_run(path)
-        # Keep presentation choices independent of original measurement data.
-        presentation_path = self.directory / 'plot_presentation.json'
-        presentation = json.loads(presentation_path.read_text(encoding='utf-8')) if presentation_path.exists() else {}
-        if not isinstance(presentation, dict):
-            raise ValueError('plot_presentation.json must contain a JSON object')
-        settings = {**settings, **presentation.get('settings', {})}
-        for entry in presentation.get('styles', []):
-            for record in self.rows:
-                if all(record.get(k) == entry.get(k) for k in ('board', 'testpoint', 'unit')):
-                    for key in STYLE_KEYS:
-                        record[key] = entry.get(key, '')
         self.setWindowTitle('Saved measurements · ' + self.directory.name)
         self.resize(1100, 850)
         layout = QVBoxLayout(self)
