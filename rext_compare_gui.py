@@ -2,7 +2,15 @@
 from __future__ import annotations
 
 import math
+import os
+import sys
 from pathlib import Path
+
+# Match the main GUI's process-local workaround for broken host GTK schemas.
+# Must be set before importing Qt or matplotlib's Qt backend.
+if sys.platform.startswith('linux') and os.environ.get('RD53_NATIVE_QT_THEME') != '1':
+    os.environ['QT_QPA_PLATFORMTHEME'] = 'generic'
+    os.environ['QT_STYLE_OVERRIDE'] = 'Fusion'
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -23,6 +31,7 @@ class RextCompareWindow(QDialog):
         super().__init__(parent)
         self.setWindowTitle('RD53 · Compare Rext current sweeps')
         self.resize(1220, 850)
+        self._initializing = True
         self.groups = {}
         self.selected_runs = []
         self.last_fit_results = []
@@ -143,6 +152,7 @@ class RextCompareWindow(QDialog):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([440, 780])
+        self._initializing = False
         self.reload()
 
     def browse(self):
@@ -212,8 +222,13 @@ class RextCompareWindow(QDialog):
                 and self.runs.item(row, 0).checkState() == Qt.CheckState.Checked]
 
     def update_preview(self, *unused):
+        # Qt may emit valueChanged/currentIndexChanged during widget construction.
+        # Never dereference the figure or the run table before both exist.
+        if self._initializing or not hasattr(self, 'figure') or not hasattr(self, 'canvas'):
+            return
         selected = self.included()
         self.last_figure = None
+        self.last_fit_results = []
         if not selected:
             self.figure.clear()
             self.canvas.draw_idle()
@@ -287,11 +302,12 @@ class RextCompareWindow(QDialog):
 def main():
     import sys
     from PyQt6.QtWidgets import QApplication
+    owned_app = QApplication.instance() is None
     app = QApplication.instance() or QApplication(sys.argv)
     root = sys.argv[1] if len(sys.argv) > 1 else 'results'
     window = RextCompareWindow(root)
     window.show()
-    if QApplication.instance() is app:
+    if owned_app:
         sys.exit(app.exec())
 
 
