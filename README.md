@@ -831,3 +831,40 @@ on its front panel, and run
 `python -m unittest tests.test_current_setpoint_retry -v`.
 Retries are deliberately bounded; they are not a substitute for verifying
 supply current, voltage compliance, and circuit safety.
+
+
+### Automatically suggested sweep parameters (including Vofshalf)
+
+**Compare sweeps… → Vary parameter** searches the original
+`metadata.json → settings → plot_configuration` values and suggests the
+numeric assignments it finds. For example, with
+
+`board #1 in SLDO mode - Rref = 150kOhm, Rext = 750 Ohm, Vofshalf = 0.4 V`
+
+the dropdown offers **Rref**, **Rext**, and **Vofshalf**, as well as the
+older built-in options for compatibility. Choose **Vofshalf** to group only
+runs with the *same board, Rref, Rext and other configuration text* while
+varying the value of Vofshalf. The table column, overlay legends, parameter
+summary x-axis and output filenames adapt to the selected parameter.
+
+Recognized assignments have names and numeric values separated by `=` or
+`:`, in the comma-separated or ` - `-separated configuration format.
+For known physical units, `400 mV` and `0.4 V` are treated as the same
+value; `0.75 kOhm` and `750 Ohm` are likewise normalized. The
+*variable's* name and value are parsed, while the unvaried configuration
+text is kept in the grouping key. Keep fixed settings consistently named,
+ordered and formatted to avoid splitting otherwise equivalent families.
+The fixed resistor and the measured/fit intercept **Vofs** are not inferred
+from the configured **Vofshalf**.
+
+Both GUI and CLI support the discovered parameters. For example:
+
+```bash
+python rext_compare.py results/board1 --vary vofshalf --signal Vin \
+    --fit --fit-min-ma 20 --fit-max-ma 100
+```
+
+This generates `vofshalf_comparison.pdf/.png`,
+`vofshalf_fit_parameters.pdf/.png`, and `vofshalf_fit_results.csv`
+without changing original measurements. The original fixed-name Rext
+comparisons remain available.
