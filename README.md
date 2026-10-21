@@ -604,3 +604,20 @@ differential/isolated instrumentation instead.
 After pulling the update, run `python -m unittest discover -s tests` and use
 **Simulation (no hardware)** for the first voltage sweep. Hardware acquisition
 with four physical Pico probes has not yet been verified.
+
+
+### Optional individual testpoint colors
+
+The wiring assignment table now includes **Plot color**. Double-click a color
+cell to choose a specific line color, or select **Use board color** to restore
+automatic coloring. **Auto** is the default: all signals belonging to the same
+board retain the same color, just like previous versions. Overrides apply to
+both live (dark) and publication (white) plots, including up/down sweeps.
+Color selections are included in saved wiring profiles and each newly recorded
+measurement CSV so that reopening and exporting an old measurement reproduces
+the selected colors. Older profiles and CSVs without a color field still work
+and use automatic board colors.
+
+Changing a color in the main GUI after a measurement updates the current
+in-memory figure and **Save Plots** output. It does not rewrite the original
+measurement CSV or metadata, which preserves what was recorded during acquisition.
