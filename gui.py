@@ -357,10 +357,14 @@ class Window(QMainWindow):
     def mapping_changed(self, item):
         if item.column()==5:
             color=item.text().strip()
-            if color and QColor(color).isValid():
-                item.setBackground(QBrush(QColor(color)))
-            else:
-                item.setBackground(QBrush())
+            self.table.blockSignals(True)
+            try:
+                if color and QColor(color).isValid():
+                    item.setBackground(QBrush(QColor(color)))
+                else:
+                    item.setBackground(QBrush())
+            finally:
+                self.table.blockSignals(False)
             if self.rows:
                 try:
                     assigned={(m['board'],m['testpoint']):m.get('color','') for m in self.read_mapping()}
