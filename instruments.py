@@ -30,12 +30,47 @@ class HMP4040(BaseHMP4040):
         return value
 
     def set_current_limit(self, current):
+        """Program the current limit and verify it without accepting stale reads.
+
+        A busy HMP4040 can occasionally return the preceding 10 mA sweep
+        setting just after a CURR command. The strict 0.1% tolerance stays
+        unchanged: only wait/re-query and, if needed, reapply the requested
+        setting once. Never continue at a persistently wrong limit.
+        """
         if not math.isfinite(current) or current <= 0:
             raise ValueError('Current must be positive and finite')
-        self.write(f'CURR {current:.9f}')
-        actual = self.number('CURR?')
-        if abs(actual-current) > max(0.00001, current*0.001):
-            raise RuntimeError(f'Current setpoint mismatch: {actual} vs {current} A')
+        target = f'CURR {current:.9f}'
+        tolerance = max(0.00001, current * 0.001)
+        self.write(target)
+        observations = []
+        # Poll a few times before retransmitting: a readback may lag the write.
+        for attempt in range(2):
+            actual = self.number('CURR?')
+            observations.append(actual)
+            if abs(actual - current) <= tolerance:
+                if len(observations) > 1:
+                    print(f'HMP4040 current setpoint settled: requested {current:.6f} A; '
+                          f'readbacks {observations} A', flush=True)
+                return
+            time.sleep(0.12)
+        # Re-assert only the *same* requested limit, then verify twice more.
+        self.write(target)
+        for attempt in range(2):
+            actual = self.number('CURR?')
+            observations.append(actual)
+            if abs(actual - current) <= tolerance:
+                print(f'HMP4040 current setpoint recovered after retry: '
+                      f'requested {current:.6f} A; readbacks {observations} A',
+                      flush=True)
+                return
+            if attempt == 0:
+                time.sleep(0.12)
+        raise RuntimeError(
+            f'Current setpoint mismatch: requested {current:.6f} A, '
+            f'last readback {observations[-1]:.6f} A '
+            f'(tolerance {tolerance:.6f} A; readbacks {observations}; '
+            f'output channel {self.channel}). Aborting scan.'
+        )
 
     def prepare_scan(self, voltage, current):
         self.master_was_on = bool(int(self.query('OUTP:GEN?')))
