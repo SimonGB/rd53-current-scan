@@ -117,7 +117,7 @@ class Window(QMainWindow):
         header.addWidget(title);header.addStretch();
         self.history_windows=[]
         open_run=QPushButton('Open old measurements…');open_run.clicked.connect(self.open_history);header.addWidget(open_run)
-        compare_rext=QPushButton('Compare Rext sweeps…')
+        compare_rext=QPushButton('Compare sweeps…')
         compare_rext.setToolTip('Overlay input-current sweeps for different external resistors from saved runs.')
         compare_rext.clicked.connect(self.open_rext_compare)
         header.addWidget(compare_rext)
