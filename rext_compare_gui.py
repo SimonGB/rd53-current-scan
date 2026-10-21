@@ -270,7 +270,15 @@ class RextCompareWindow(QDialog):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         try:
-            save_comparison(self.last_figure, self.last_fit_results, folder)
+            save_comparison(self.last_figure, self.last_fit_results, folder, self.included(), {
+                'signal': self.signal.currentText(),
+                'direction': self.direction.currentText(),
+                'fit': self.fit.isChecked(),
+                'fit_min_ma': self.fit_start.value() if self.fit.isChecked() else None,
+                'fit_max_ma': self.fit_end.value() if self.fit.isChecked() else None,
+                'fit_max_voltage': self.fit_voltage.value(),
+                'plot_max_ma': self.plot_limit.value(),
+            })
             QMessageBox.information(self, 'Rext comparison saved', str(folder))
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, 'Could not save comparison', str(exc))
