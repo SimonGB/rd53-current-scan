@@ -168,7 +168,7 @@ def fit_trace(x, y, min_ma=None, max_ma=None, max_voltage=2.0):
 
 def compare(runs, signal='Vin', direction='up', fit=False,
             fit_min_ma=None, fit_max_ma=None, fit_max_voltage=2.0,
-            max_plot_ma=None, title=None):
+            max_plot_ma=None, title=None, figure=None):
     """Return a Matplotlib Figure and fit result table."""
     from matplotlib.figure import Figure
     from matplotlib import colormaps
@@ -179,7 +179,10 @@ def compare(runs, signal='Vin', direction='up', fit=False,
     if direction not in ('up', 'down'):
         raise ValueError('Direction must be up or down')
 
-    figure = Figure(figsize=(9.0, 5.8), layout='constrained')
+    if figure is None:
+        figure = Figure(figsize=(9.0, 5.8), layout='constrained')
+    else:
+        figure.clear()
     ax = figure.add_subplot(111)
     cmap = colormaps['tab20']
     colors = [cmap(i / max(1, len(runs)-1)) for i in range(len(runs))]
