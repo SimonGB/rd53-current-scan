@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 
+from config_parameters import discovered_parameters, normalized_name
 from rext_compare import (discover, families, signal_choices, compare,
                           plot_fit_parameters, save_comparison)
 
@@ -70,6 +71,7 @@ class RextCompareWindow(QDialog):
         self.vary = QComboBox()
         self.vary.addItem('External resistor (Rext)', 'rext')
         self.vary.addItem('Configured offset voltage (Voffset)', 'offset')
+        self.vary.setToolTip('Found automatically in saved acquisition configurations; select any numeric parameter to compare.')
         self.vary.currentIndexChanged.connect(self.reload)
         group_form.addRow('Vary parameter', self.vary)
         self.group = QComboBox()
@@ -180,6 +182,22 @@ class RextCompareWindow(QDialog):
 
     def reload(self):
         try:
+            found = discovered_parameters(self.root.text())
+            previous = self.vary.currentData()
+            self.vary.blockSignals(True)
+            try:
+                self.vary.clear()
+                self.vary.addItem('External resistor (Rext)', 'rext')
+                self.vary.addItem('Configured offset voltage (Voffset)', 'offset')
+                for key, label, unit, count in found:
+                    if key in ('rext','offset'):
+                        continue
+                    suffix = f' [{unit}]' if unit else ''
+                    self.vary.addItem(f'{label}{suffix} · {count} runs', key)
+                index = self.vary.findData(previous)
+                self.vary.setCurrentIndex(max(0,index))
+            finally:
+                self.vary.blockSignals(False)
             scans, errors = discover(self.root.text(), return_errors=True,
                                     parameter=self.vary.currentData())
             self.groups = families(scans)
@@ -195,14 +213,17 @@ class RextCompareWindow(QDialog):
         self.group.blockSignals(False)
         self.status.setPlainText(
             f'Found {len(scans)} compatible board scans in {len(self.groups)} groups. '
-            f'Skipped {len(errors)} directories without a usable current-sweep configuration.')
+            f'Skipped {len(errors)} directories without a matching parameter or current sweep.')
         self.refresh_group()
 
     def refresh_group(self):
         key = self.group.currentData()
         group = self.groups.get(key, [])
-        self.runs.setHorizontalHeaderLabels(['Use', 'Rext [Ω]' if self.vary.currentData()=='rext'
-                                             else 'Voffset [V]', 'Run timestamp','Run folder'])
+        key_label = self.vary.currentText().split(' · ')[0].split(' [')[0]
+        key_unit = group[0].variable_unit if group else (
+            'Ω' if self.vary.currentData()=='rext' else 'V' if self.vary.currentData()=='offset' else '')
+        heading = f'{key_label} [{key_unit}]' if key_unit else key_label
+        self.runs.setHorizontalHeaderLabels(['Use', heading, 'Run timestamp','Run folder'])
         signals = signal_choices(group)
         self.signal.blockSignals(True)
         self.signal.clear()
@@ -274,7 +295,7 @@ class RextCompareWindow(QDialog):
             )
             plot_fit_parameters(result, figure=self.parameters_figure,
                                 title=f'{selected[0].board}: {signal} fit parameters vs '
-                                      f'{"Rext" if self.vary.currentData()=="rext" else "offset voltage"}')
+                                      f'{self.vary.currentText().split(" · ")[0]}')
             self.canvas.draw_idle()
             self.parameters_canvas.draw_idle()
             self.last_figure = plotted
@@ -293,26 +314,29 @@ class RextCompareWindow(QDialog):
             self.status.setPlainText(str(exc))
 
     def fit_label(self,item):
-        return (f"Rext={item['rext_ohm']:g} Ω" if self.vary.currentData()=='rext'
-                else f"Voffset={item['offset_setting_v']:g} V")
+        unit = item.get('variable_unit','')
+        name = self.vary.currentText().split(' · ')[0].split(' [')[0]
+        return f"{name}={item['variable_value']:g}" + (f" {unit}" if unit else '')
 
     def save(self):
         if self.last_figure is None:
             QMessageBox.information(self, 'No comparison', 'Generate a valid overlay first.')
             return
         chosen = QFileDialog.getExistingDirectory(
-            self, 'Save Rext comparison', str(Path(self.root.text()) / 'rext_comparisons'))
+            self, 'Save sweep comparison', str(Path(self.root.text()) / f'{normalized_name(self.vary.currentData())}_comparisons'))
         if not chosen:
             return
         folder = Path(chosen)
-        prefix = 'rext' if self.vary.currentData()=='rext' else 'offset_setting'
+        prefix = ('rext' if self.vary.currentData()=='rext'
+                  else 'offset_setting' if self.vary.currentData()=='offset'
+                  else normalized_name(self.vary.currentData()))
         targets = [folder / f'{name}.{ext}'
                    for name in (f'{prefix}_comparison', f'{prefix}_fit_parameters')
                    for ext in ('png', 'pdf')]
         if any(target.exists() for target in targets):
             reply = QMessageBox.question(
                 self, 'Overwrite plots?',
-                'Existing Rext comparison PNG/PDF will be overwritten. Continue?',
+                'Existing comparison PNG/PDF will be overwritten. Continue?',
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if reply != QMessageBox.StandardButton.Yes:
@@ -328,7 +352,7 @@ class RextCompareWindow(QDialog):
                 'fit_max_voltage': self.fit_voltage.value(),
                 'plot_max_ma': self.plot_limit.value(),
             }, fit_figure=self.parameters_figure)
-            QMessageBox.information(self, 'Rext comparison saved', str(folder))
+            QMessageBox.information(self, 'Sweep comparison saved', str(folder))
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, 'Could not save comparison', str(exc))
 
