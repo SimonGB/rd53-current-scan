@@ -14,12 +14,12 @@ if sys.platform.startswith("linux") and os.environ.get("RD53_NATIVE_QT_THEME") !
     os.environ["QT_QPA_PLATFORMTHEME"] = "generic"
     os.environ["QT_STYLE_OVERRIDE"] = "Fusion"
 from PyQt6.QtCore import Qt,QThread,pyqtSignal,QRectF,QSize,QStandardPaths,QTimer
-from PyQt6.QtGui import QColor,QPainter,QPen,QPixmap,QFont,QIcon
+from PyQt6.QtGui import QColor,QPainter,QPen,QPixmap,QFont,QIcon,QBrush
 from PyQt6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,
  QFormLayout,QLabel,QLineEdit,QPushButton,QComboBox,QCheckBox,QSpinBox,QDoubleSpinBox,
  QGroupBox,QTableWidget,QTableWidgetItem,QHeaderView,QSplitter,QTabWidget,QPlainTextEdit,
  QFileDialog,QInputDialog,QMessageBox,QProgressBar,QScrollArea,QSizePolicy,
- QDialog,QDialogButtonBox,QToolButton,QMenu,QListWidget,QListWidgetItem,QAbstractItemView,QStyledItemDelegate)
+ QDialog,QDialogButtonBox,QToolButton,QMenu,QListWidget,QListWidgetItem,QAbstractItemView,QStyledItemDelegate,QColorDialog)
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from mapping import default_profile,validate_profile
@@ -204,9 +204,10 @@ class Window(QMainWindow):
         self.overview.focused.connect(self.focus_from_card);self.overview.placed.connect(self.place_from_card)
         editrow=QHBoxLayout();self.editpoints=QCheckBox('Place / move testpoints on click');editrow.addWidget(self.editpoints)
         remove=QPushButton('Remove testpoint');remove.clicked.connect(self.remove_testpoint);editrow.addWidget(remove);editrow.addStretch();rl.addLayout(editrow)
-        self.table=QTableWidget(0,5);self.table.setHorizontalHeaderLabels(['RD53 board','Testpoint','Measurement input','Probe × (Pico)','BNC ±range [V] (Pico)'])
+        self.table=QTableWidget(0,6);self.table.setHorizontalHeaderLabels(['RD53 board','Testpoint','Measurement input','Probe × (Pico)','BNC ±range [V] (Pico)','Plot color'])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);self.table.setMaximumHeight(170);self.table.setMinimumHeight(110);rl.addWidget(self.table)
         self.table.setItemDelegateForColumn(2,ChannelDelegate(self))
+        self.table.cellDoubleClicked.connect(self.choose_plot_color)
         mapbuttons=QHBoxLayout()
         for title,fn in [('Add assignment',self.add_mapping),('Add connection…',self.add_connection_dialog),('Remove selected',self.remove_mapping)]:
             btn=QPushButton(title);btn.clicked.connect(fn);mapbuttons.addWidget(btn)
@@ -225,7 +226,7 @@ class Window(QMainWindow):
         self.view.clicked.connect(self.select_point);self.view.place.connect(self.place_point)
         self.editpoints.toggled.connect(self.set_edit_mode)
         self.startbtn.clicked.connect(self.start);self.stopbtn.clicked.connect(self.stop)
-        self.table.itemChanged.connect(lambda _:self.refresh_board());self.rebuild();self.redraw()
+        self.table.itemChanged.connect(self.mapping_changed);self.rebuild();self.redraw()
         self.eta_timer=QTimer(self);self.eta_timer.setInterval(1000);self.eta_timer.timeout.connect(self.update_eta);self.eta_timer.start()
         for box in self.fields.values():box.valueChanged.connect(self.reset_eta)
         self.captures.valueChanged.connect(self.reset_eta);self.reverse.toggled.connect(self.reset_eta);self.sim.toggled.connect(self.reset_eta)
@@ -326,9 +327,48 @@ class Window(QMainWindow):
     def read_mapping(self):
         result=[]
         for r in range(self.table.rowCount()):
-            texts=[self.table.item(r,c).text().strip() if self.table.item(r,c) else '' for c in range(5)]
-            result.append(dict(board=texts[0],testpoint=texts[1],channel=texts[2],probe=float(texts[3]),range=float(texts[4])))
+            texts=[self.table.item(r,c).text().strip() if self.table.item(r,c) else '' for c in range(6)]
+            result.append(dict(board=texts[0],testpoint=texts[1],channel=texts[2],
+                               probe=float(texts[3]),range=float(texts[4]),
+                               color='' if texts[5].lower() in ('auto','default','') else texts[5]))
         return result
+
+    def choose_plot_color(self, row, col):
+        if col != 5 or self.running:
+            return
+        item=self.table.item(row,5)
+        if item is None:
+            return
+        menu=QMessageBox(self)
+        menu.setWindowTitle('Testpoint plot color')
+        menu.setText('Choose a line color or use the automatic board color.')
+        pick=menu.addButton('Choose color…', QMessageBox.ButtonRole.AcceptRole)
+        reset=menu.addButton('Use board color', QMessageBox.ButtonRole.ResetRole)
+        menu.addButton(QMessageBox.StandardButton.Cancel)
+        menu.exec()
+        if menu.clickedButton()==reset:
+            item.setText('Auto')
+        elif menu.clickedButton()==pick:
+            current=QColor(item.text())
+            color=QColorDialog.getColor(current if current.isValid() else QColor('#56B4E9'),self,'Choose plot color')
+            if color.isValid():
+                item.setText(color.name())
+
+    def mapping_changed(self, item):
+        if item.column()==5:
+            color=item.text().strip()
+            if color and QColor(color).isValid():
+                item.setBackground(QBrush(QColor(color)))
+            else:
+                item.setBackground(QBrush())
+            if self.rows:
+                try:
+                    assigned={(m['board'],m['testpoint']):m.get('color','') for m in self.read_mapping()}
+                    for record in self.rows:
+                        record['color']=assigned.get((record['board'],record['testpoint']),record.get('color',''))
+                except (ValueError,TypeError):
+                    pass
+        self.refresh_board()
     def snapshot(self):
         p=copy.deepcopy(self.profile);p['backend']=self.backend.currentText();p['mappings']=self.read_mapping()
         p['adc']={n:e.text() for n,e in self.adcfields.items()};return validate_profile(p)
@@ -337,7 +377,15 @@ class Window(QMainWindow):
         self.boardselect.addItems([b['id'] for b in self.profile['boards']]);self.boardselect.setCurrentText(selected if selected in [b['id'] for b in self.profile['boards']] else self.profile['boards'][0]['id']);self.boardselect.blockSignals(False)
         self.table.blockSignals(True);self.table.setRowCount(len(self.profile['mappings']))
         for r,m in enumerate(self.profile['mappings']):
-            for c,n in enumerate(('board','testpoint','channel','probe','range')):self.table.setItem(r,c,QTableWidgetItem(str(m[n])))
+            for c,n in enumerate(('board','testpoint','channel','probe','range')):
+                self.table.setItem(r,c,QTableWidgetItem(str(m[n])))
+            color=m.get('color','')
+            item=QTableWidgetItem(color or 'Auto')
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            item.setToolTip('Double-click for a color picker. Auto = board color.')
+            if color and QColor(color).isValid():
+                item.setBackground(QBrush(QColor(color)))
+            self.table.setItem(r,5,item)
         self.table.blockSignals(False);self.refresh_board()
     def refresh_board(self,*_):
         self.view.board=next((b for b in self.profile['boards'] if b['id']==self.boardselect.currentText()),{})
