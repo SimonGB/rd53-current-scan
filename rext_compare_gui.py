@@ -233,16 +233,8 @@ class RextCompareWindow(QDialog):
                 fit_min_ma=self.fit_start.value() if self.fit.isChecked() else None,
                 fit_max_ma=self.fit_end.value() if self.fit.isChecked() else None,
                 fit_max_voltage=self.fit_voltage.value(),
-                max_plot_ma=self.plot_limit.value(),
+                max_plot_ma=self.plot_limit.value(), figure=self.figure,
             )
-            # Transfer axes into the existing Qt canvas by rendering the same model.
-            self.figure.clear()
-            from matplotlib.backends.backend_agg import FigureCanvasAgg
-            # Re-draw directly into our persistent Figure for efficient GUI updates.
-            # Compare creates the Figure; replacing the canvas keeps toolbar interactive.
-            self.figure = plotted
-            self.canvas.figure = self.figure
-            self.figure.set_canvas(self.canvas)
             self.canvas.draw_idle()
             self.last_figure = plotted
             self.last_fit_results = result
