@@ -204,10 +204,10 @@ class Window(QMainWindow):
         self.overview.focused.connect(self.focus_from_card);self.overview.placed.connect(self.place_from_card)
         editrow=QHBoxLayout();self.editpoints=QCheckBox('Place / move testpoints on click');editrow.addWidget(self.editpoints)
         remove=QPushButton('Remove testpoint');remove.clicked.connect(self.remove_testpoint);editrow.addWidget(remove);editrow.addStretch();rl.addLayout(editrow)
-        self.table=QTableWidget(0,6);self.table.setHorizontalHeaderLabels(['RD53 board','Testpoint','Measurement input','Probe × (Pico)','BNC ±range [V] (Pico)','Plot color'])
+        self.table=QTableWidget(0,6);self.table.setHorizontalHeaderLabels(['RD53 board','Testpoint','Measurement input','Probe × (Pico)','BNC ±range [V] (Pico)','Plotting'])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);self.table.setMaximumHeight(170);self.table.setMinimumHeight(110);rl.addWidget(self.table)
         self.table.setItemDelegateForColumn(2,ChannelDelegate(self))
-        self.table.cellDoubleClicked.connect(self.choose_plot_color)
+        self.table.cellDoubleClicked.connect(self.edit_plotting)
         mapbuttons=QHBoxLayout()
         for title,fn in [('Add assignment',self.add_mapping),('Add connection…',self.add_connection_dialog),('Remove selected',self.remove_mapping)]:
             btn=QPushButton(title);btn.clicked.connect(fn);mapbuttons.addWidget(btn)
@@ -326,52 +326,79 @@ class Window(QMainWindow):
 
     def read_mapping(self):
         result=[]
-        for r in range(self.table.rowCount()):
-            texts=[self.table.item(r,c).text().strip() if self.table.item(r,c) else '' for c in range(6)]
+        for row in range(self.table.rowCount()):
+            texts=[self.table.item(row,c).text().strip() if self.table.item(row,c) else '' for c in range(5)]
+            item=self.table.item(row,5)
+            style=item.data(Qt.ItemDataRole.UserRole) if item else {}
+            style=style if isinstance(style,dict) else {}
             result.append(dict(board=texts[0],testpoint=texts[1],channel=texts[2],
                                probe=float(texts[3]),range=float(texts[4]),
-                               color='' if texts[5].lower() in ('auto','default','') else texts[5]))
+                               color=style.get('color',''),linestyle=style.get('linestyle',''),
+                               marker=style.get('marker','')))
         return result
 
-    def choose_plot_color(self, row, col):
-        if col != 5 or self.running:
-            return
+    def edit_plotting(self,row,col):
+        if col!=5 or self.running:return
         item=self.table.item(row,5)
-        if item is None:
-            return
-        menu=QMessageBox(self)
-        menu.setWindowTitle('Testpoint plot color')
-        menu.setText('Choose a line color or use the automatic board color.')
-        pick=menu.addButton('Choose color…', QMessageBox.ButtonRole.AcceptRole)
-        reset=menu.addButton('Use board color', QMessageBox.ButtonRole.ResetRole)
-        menu.addButton(QMessageBox.StandardButton.Cancel)
-        menu.exec()
-        if menu.clickedButton()==reset:
-            item.setText('Auto')
-        elif menu.clickedButton()==pick:
-            current=QColor(item.text())
-            color=QColorDialog.getColor(current if current.isValid() else QColor('#56B4E9'),self,'Choose plot color')
-            if color.isValid():
-                item.setText(color.name())
+        if item is None:return
+        style=item.data(Qt.ItemDataRole.UserRole) or {}
+        dialog=QDialog(self);dialog.setWindowTitle('Plotting · '+self.table.item(row,1).text())
+        layout=QFormLayout(dialog)
+        mode=QComboBox();mode.addItems(['Auto (board/signal defaults)','Custom'])
+        mode.setCurrentIndex(1 if any(style.get(k) for k in ('color','linestyle','marker')) else 0)
+        layout.addRow('Style',mode)
+        chosen=[style.get('color','')]
+        color=QPushButton(chosen[0] or 'Choose color…')
+        def pick_color():
+            initial=QColor(chosen[0]) if chosen[0] else QColor('#56B4E9')
+            value=QColorDialog.getColor(initial,dialog,'Line color')
+            if value.isValid():
+                chosen[0]=value.name()
+                color.setText(chosen[0])
+        color.clicked.connect(pick_color);layout.addRow('Color',color)
+        line=QComboBox()
+        for label,value in [('Auto',''),('Solid','-'),('Dashed','--'),('Dotted',':'),
+                            ('Dash-dot','-.'),('No line','None')]:
+            line.addItem(label,value)
+        line.setCurrentIndex(max(0,line.findData(style.get('linestyle',''))))
+        layout.addRow('Line',line)
+        marker=QComboBox()
+        for label,value in [('Auto',''),('Circle','o'),('Square','s'),('Triangle up','^'),
+                            ('Triangle down','v'),('Diamond','D'),('Cross','x'),
+                            ('Plus','+'),('Star','*'),('Point','.'),('No marker','None')]:
+            marker.addItem(label,value)
+        marker.setCurrentIndex(max(0,marker.findData(style.get('marker',''))))
+        layout.addRow('Symbol',marker)
+        note=QLabel('Custom options left on Auto use the usual board color and signal style.')
+        note.setWordWrap(True);layout.addRow(note)
+        def toggle():
+            enabled=mode.currentIndex()==1
+            for widget in (color,line,marker):widget.setEnabled(enabled)
+        mode.currentIndexChanged.connect(toggle);toggle()
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
+        layout.addRow(buttons);buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject)
+        if dialog.exec()!=QDialog.DialogCode.Accepted:return
+        custom=mode.currentIndex()==1
+        updated={'color':chosen[0] if custom else '',
+                 'linestyle':line.currentData() if custom else '',
+                 'marker':marker.currentData() if custom else ''}
+        self.table.blockSignals(True)
+        try:
+            item.setData(Qt.ItemDataRole.UserRole,updated)
+            parts=[updated['color'],line.currentText() if updated['linestyle'] else '',
+                   marker.currentText() if updated['marker'] else '']
+            item.setText(' · '.join(x for x in parts if x) or 'Auto')
+            item.setBackground(QBrush(QColor(updated['color'])) if updated['color'] else QBrush())
+        finally:
+            self.table.blockSignals(False)
+        by_point={(m['board'],m['testpoint']):m for m in self.read_mapping()}
+        for record in self.rows:
+            setting=by_point.get((record['board'],record['testpoint']))
+            if setting:
+                for key in ('color','linestyle','marker'):record[key]=setting[key]
+        self.refresh_board()
 
-    def mapping_changed(self, item):
-        if item.column()==5:
-            color=item.text().strip()
-            self.table.blockSignals(True)
-            try:
-                if color and QColor(color).isValid():
-                    item.setBackground(QBrush(QColor(color)))
-                else:
-                    item.setBackground(QBrush())
-            finally:
-                self.table.blockSignals(False)
-            if self.rows:
-                try:
-                    assigned={(m['board'],m['testpoint']):m.get('color','') for m in self.read_mapping()}
-                    for record in self.rows:
-                        record['color']=assigned.get((record['board'],record['testpoint']),record.get('color',''))
-                except (ValueError,TypeError):
-                    pass
+    def mapping_changed(self,item):
         self.refresh_board()
     def snapshot(self):
         p=copy.deepcopy(self.profile);p['backend']=self.backend.currentText();p['mappings']=self.read_mapping()
@@ -383,12 +410,13 @@ class Window(QMainWindow):
         for r,m in enumerate(self.profile['mappings']):
             for c,n in enumerate(('board','testpoint','channel','probe','range')):
                 self.table.setItem(r,c,QTableWidgetItem(str(m[n])))
-            color=m.get('color','')
-            item=QTableWidgetItem(color or 'Auto')
+            style={key:m.get(key,'') for key in ('color','linestyle','marker')}
+            item=QTableWidgetItem(' · '.join(x for x in style.values() if x) or 'Auto')
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            item.setToolTip('Double-click for a color picker. Auto = board color.')
-            if color and QColor(color).isValid():
-                item.setBackground(QBrush(QColor(color)))
+            item.setData(Qt.ItemDataRole.UserRole,style)
+            item.setToolTip('Double-click to configure automatic or custom color, line and symbol.')
+            if style['color'] and QColor(style['color']).isValid():
+                item.setBackground(QBrush(QColor(style['color'])))
             self.table.setItem(r,5,item)
         self.table.blockSignals(False);self.refresh_board()
     def refresh_board(self,*_):
