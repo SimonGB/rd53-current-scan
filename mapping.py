@@ -24,6 +24,7 @@ def validate_profile(profile):
     mappings = profile.get('mappings', [])
     if not mappings:
         raise ValueError('Assign at least one measurement input')
+    from matplotlib.colors import is_color_like
     used, targets = set(), set()
     valid_endpoints=endpoints(profile)
     for point in connection_points(profile).values():
@@ -45,6 +46,9 @@ def validate_profile(profile):
             raise ValueError('ADC channel must be PMOD1..6_Ch0..7')
         if channel in used or (m['board'],m['testpoint']) in targets:
             raise ValueError('Each input and target may be assigned only once')
+        color=m.get('color', '')
+        if color and (not isinstance(color,str) or not is_color_like(color)):
+            raise ValueError(f'Invalid plot color for {m["board"]} / {m["testpoint"]}: {color!r}')
         used.add(channel); targets.add((m['board'],m['testpoint']))
         for n in ('probe','range'):
             if not math.isfinite(float(m.get(n,1))) or float(m.get(n,1))<=0:
