@@ -621,3 +621,28 @@ and use automatic board colors.
 Changing a color in the main GUI after a measurement updates the current
 in-memory figure and **Save Plots** output. It does not rewrite the original
 measurement CSV or metadata, which preserves what was recorded during acquisition.
+
+
+### Plotting styles per testpoint and unified axis maximum
+
+The testpoint assignment table's final column is now **Plotting**. Double-click
+it to open the plotting editor. **Auto** retains the previous behavior:
+same board colors and the usual Vin/Vout dotted/solid lines and marker shapes.
+**Custom** lets you independently choose a color, a line pattern
+(solid, dashed, dotted, dash-dot, or no line), and a symbol
+(circle, square, triangles, diamond, cross, plus, star, point, or none).
+Each individual Custom field also has an Auto/default option.
+The choice is saved in wiring profiles and in new measurement CSV rows
+(`color`, `linestyle`, `marker`), so that reopening a saved run and exporting
+it will reproduce the selected presentation. Existing profiles and CSV files
+with no style fields remain supported.
+
+**Plot maximum** is now a single control. Its label and units follow the
+selected sweep mode and it remembers separate current and voltage values.
+The recorded run mode determines the displayed axis after acquisition.
+The automatic plot export now applies `plot_max_v` for voltage sweeps
+(instead of erroneously using the current-sweep 100 mA limit).
+For previously saved voltage scans, use **Open old measurements…** and change
+the axis maximum before pressing **Save Plots…** to regenerate the old files.
+
+Validation: `python -m unittest discover -s tests`.
