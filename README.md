@@ -807,3 +807,27 @@ python rext_compare.py results/board1 --vary offset --board board1 \
 
 Use `python -m unittest tests.test_rext_compare -v` to run the parser,
 grouping, fit and GUI-switch regression tests.
+
+
+### Intermittent HMP4040 current-setpoint readback mismatches
+
+When a current-sweep step is programmed, the HMP4040 scan adapter verifies
+`CURR?` against the requested **programmed current limit** (not
+`MEAS:CURR?`, which reads actual load current). On some scans, `CURR?`
+immediately after a write may still report the previous step—for example,
+requesting 1.155 A on the down sweep but observing 1.165 A.
+
+Instead of aborting on the first mismatch, the adapter now checks again
+after 120 ms. If both checks fail, it **reapplies the identical requested
+setpoint once** and verifies up to two additional times. The existing
+0.1% (or minimum 10 μA) acceptance tolerance is **not** relaxed. If the
+readback remains wrong, the scan stops and uses the existing output shutdown
+path. Transient recoveries are printed in the run log with the sequence of
+readbacks. No scans are continued at a knowingly incorrect current setting.
+
+To diagnose a persistent mismatch, check that no other software controls
+the same HMP channel, inspect the instrument's channel selection and setpoint
+on its front panel, and run
+`python -m unittest tests.test_current_setpoint_retry -v`.
+Retries are deliberately bounded; they are not a substitute for verifying
+supply current, voltage compliance, and circuit safety.
