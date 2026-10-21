@@ -109,7 +109,21 @@ def load_run(path):
             rows.append(row)
     if not rows:
         raise ValueError('No measurement records in CSV')
-    return rows, metadata.get('settings', {}), directory
+    settings = dict(metadata.get('settings', {}))
+    presentation_path = directory / 'plot_presentation.json'
+    if presentation_path.exists():
+        presentation = json.loads(presentation_path.read_text(encoding='utf-8'))
+        if not isinstance(presentation, dict):
+            raise ValueError('plot_presentation.json must be an object')
+        settings.update(presentation.get('settings', {}))
+        by_key = {(entry['board'], entry['testpoint'], entry['unit']): entry
+                  for entry in presentation.get('styles', [])}
+        for row in rows:
+            setting = by_key.get((row['board'], row['testpoint'], row['unit']))
+            if setting is not None:
+                for key in ('color', 'linestyle', 'marker'):
+                    row[key] = setting.get(key, '')
+    return rows, settings, directory
 
 
 def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, configuration="", dark=False, show_difference=True, mode_hint=None):
