@@ -93,6 +93,47 @@ class RextCompareTests(unittest.TestCase):
             self.assertEqual(len(scans),1)
             self.assertEqual(scans[0].rext_ohms,750)
 
+    def test_gui_initialization_with_empty_directory(self):
+        import os
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from rext_compare_gui import RextCompareWindow
+        except ImportError:
+            self.skipTest('PyQt6 not installed')
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as temp:
+            window = RextCompareWindow(temp)
+            try:
+                self.assertIsNotNone(window.figure)
+                self.assertEqual(window.runs.rowCount(), 0)
+                self.assertIsNone(window.last_figure)
+                window.plot_limit.setValue(150)
+                window.fit_end.setValue(95)
+            finally:
+                window.close()
+
+    def test_gui_initialization_with_matching_runs(self):
+        import os
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from rext_compare_gui import RextCompareWindow
+        except ImportError:
+            self.skipTest('PyQt6 not installed')
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_run(root, '001', 600)
+            make_run(root, '002', 750)
+            window = RextCompareWindow(root)
+            try:
+                self.assertEqual(window.runs.rowCount(), 2)
+                self.assertIsNotNone(window.last_figure)
+                self.assertEqual(len(window.figure.axes[0].lines), 2)
+            finally:
+                window.close()
+
 
 if __name__=='__main__':
     unittest.main()
