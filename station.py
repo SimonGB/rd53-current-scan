@@ -68,7 +68,7 @@ def plot_mapped(rows,out):
             rr=[r for r in rows if (r['board'],r['testpoint'])==(board,tp) and r['direction']==direction]
             if rr:
                 ax.errorbar([r.get('voltage_measured_V',r['supply_voltage_V']) if r.get('sweep_mode')=='voltage' else r['current_measured_A']*1000 for r in rr],[r['mean'] for r in rr],
-                    yerr=[r['capture_std'] or 0 for r in rr],label=direction,**sweep_style(direction,colors[(board,tp,unit)]))
+                    yerr=[r['capture_std'] or 0 for r in rr],label=direction,**sweep_style(direction,next((r.get('color') for r in rr if r.get('color')),None) or colors[(board,tp,unit)]))
         ax.set_ylabel(f'{board} · {tp} [{unit}]');ax.grid(alpha=.25);ax.legend()
     ax.set_xlabel('Measured supply voltage [V]' if rows[0].get('sweep_mode')=='voltage' else 'Measured supply current [mA]')
     fig.tight_layout();fig.savefig(out/'mapped_voltages.png',dpi=150);fig.savefig(out/'mapped_voltages.pdf')
@@ -123,7 +123,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
     metadata['point_timings_s']=[]
     fields=['point','direction','timestamp_UTC','board','testpoint','input','unit','sweep_mode','voltage_set_V','voltage_measured_V','voltage_tracking_ok','current_set_A',
             'current_measured_A','supply_voltage_V','current_tracking_ok','mean','capture_std',
-            'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision','positive_endpoint','negative_endpoint']
+            'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision','positive_endpoint','negative_endpoint','color']
     try:
         if cancel.is_set():raise InterruptedError('Stop requested')
         reader.connect()
@@ -175,7 +175,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                 for m in mappings:
                     stats=futures[m['channel']].result()
                     row=dict(point=index,direction=direction,timestamp_UTC=timestamp,board=m['board'],
-                        testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],sweep_mode=mode,
+                        testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],color=m.get('color',''),sweep_mode=mode,
                          voltage_set_V=setpoint if mode=='voltage' else args.voltage_limit,
                          voltage_measured_V=voltage,voltage_tracking_ok=(abs(voltage-setpoint)<=max(.005,.02*setpoint)) if mode=='voltage' else '',current_set_A=setpoint if mode=='current' else args.max_current,
                         current_measured_A=measured,supply_voltage_V=voltage,
