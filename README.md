@@ -759,3 +759,51 @@ especially in the startup transition.
 `rext_comparison.png/.pdf`, `rext_fit_results.csv` and the source
 manifest. The fit CSV includes `slope_error_ohm` and `offset_error_v`.
 The CLI creates parameter figures when invoked with `--fit`.
+
+
+### Compare fixed-Rext offset-voltage scans
+
+The **Compare sweeps…** window now has a **Vary parameter** selector:
+**External resistor (Rext)** (existing behavior) or
+**Configured offset voltage (Voffset)**. The second option overlays one
+measured voltage (such as VIN) versus measured input current while holding
+the **Rext text and every other configuration parameter unchanged**.
+
+Use consistent acquisition configuration text, for example:
+
+```text
+board #1 in SLDO mode - Rref = 150kOhm, Rext = 750 Ohm, Voffset = 0.4 V
+board #1 in SLDO mode - Rref = 150kOhm, Rext = 750 Ohm, Voffset = 0.6 V
+board #1 in SLDO mode - Rref = 150kOhm, Rext = 750 Ohm, Voffset = 0.8 V
+```
+
+The parser recognizes `Voffset`, `V_offset`, `Voff`, `Vofs`, and
+`offset voltage`, with signed numeric values and units `V` or `mV`.
+To reliably match families, prefer the exact same name, order, and formatting
+for all fixed settings; vary only the numeric offset voltage. In this
+comparison, **Voffset is the configured external setting**. The fitted
+`Vofs` is a *different quantity*: the intercept from the linear model
+`Vmeasured = Rslope * Iin + Vofs`.
+
+The first plot overlays the selected measured-voltage curves labeled
+`Voffset = ... V`; the second plot displays the **fitted slope (Ω)**
+and **fitted intercept Vofs (V)** versus the configured offset voltage.
+Fits use the same adjustable current interval and voltage cutoff. The
+existing **Rext comparison** behavior is unchanged.
+
+Files saved in offset mode are named
+`offset_setting_comparison.png/.pdf`,
+`offset_setting_fit_parameters.png/.pdf`,
+`offset_setting_fit_results.csv`, and
+`offset_setting_comparison_manifest.json`, separately from Rext plots.
+
+For command-line use:
+
+```bash
+python rext_compare.py results/board1 --vary offset --board board1 \
+    --signal Vin --direction up --fit --fit-min-ma 20 --fit-max-ma 100 \
+    --output results/offset_comparisons
+```
+
+Use `python -m unittest tests.test_rext_compare -v` to run the parser,
+grouping, fit and GUI-switch regression tests.
