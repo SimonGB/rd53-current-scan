@@ -28,6 +28,40 @@ REXT_PATTERN = re.compile(
 )
 
 
+# Offset-voltage setpoints are experimental configuration values, not the
+# intercept Vofs extracted from fitting the VIN-versus-current relationship.
+OFFSET_PATTERN = re.compile(
+    r"(?<!\\w)(?:V[_\\s]*(?:offset|off|ofs)|offset[_\\s]*voltage)\\s*[:=]\\s*"
+    r"(?P<value>[+-]?(?:\\d+(?:[.,]\\d*)?|[.,]\\d+))\\s*"
+    r"(?P<unit>m\\s*V|V)?(?!\\w)",
+    flags=re.IGNORECASE,
+)
+
+
+def parse_variable(configuration, parameter='rext'):
+    """Parse one changed parameter and normalize all other configuration text.
+
+    Parameter='offset' keeps the actual Rext assignment in the family key,
+    so configurations with different external resistors cannot be mixed.
+    """
+    if parameter == 'rext':
+        return parse_configuration(configuration)
+    if parameter != 'offset':
+        raise ValueError(f'Unknown comparison parameter: {parameter}')
+    matches = list(OFFSET_PATTERN.finditer(configuration or ''))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    value = float(match.group('value').replace(',', '.'))
+    unit = (match.group('unit') or 'V').replace(' ', '').lower()
+    volts = value / 1000 if unit == 'mv' else value
+    if not math.isfinite(volts):
+        return None
+    family = OFFSET_PATTERN.sub('Voffset=<varying>', configuration)
+    family = re.sub(r'\\s+', ' ', family).strip().casefold()
+    return volts, family
+
+
 def parse_configuration(configuration: str):
     """Return (Rext in ohms, normalized configuration family), or None."""
     if not configuration:
@@ -55,6 +89,11 @@ class Run:
     configuration: str
     rows: list
     mtime: float
+    parameter: str = 'rext'
+
+    @property
+    def variable_value(self):
+        return self.rext_ohms
 
     @property
     def signals(self):
@@ -66,7 +105,7 @@ class Run:
         return self.directory.name
 
 
-def discover(root, return_errors=False):
+def discover(root, return_errors=False, parameter='rext'):
     """Discover compatible current scans, deduplicating by CSV path."""
     root = Path(root).expanduser()
     if not root.is_dir():
@@ -83,9 +122,9 @@ def discover(root, return_errors=False):
             acquired = metadata.get('settings', {})
             # Use original acquisition metadata, NOT a replotted sidecar.
             configuration = str(acquired.get('plot_configuration') or '').strip()
-            parsed = parse_configuration(configuration)
+            parsed = parse_variable(configuration, parameter)
             if parsed is None:
-                errors.append(f'{directory}: no unique Rext=... in acquisition configuration')
+                errors.append(f'{directory}: no unique '+('Rext' if parameter=='rext' else 'offset voltage')+' in acquisition configuration')
                 continue
             rext, family = parsed
             rows, _, _ = load_run(directory)
@@ -101,7 +140,7 @@ def discover(root, return_errors=False):
                 if not filtered:
                     continue
                 runs.append(Run(directory, board, rext, family,
-                                configuration, filtered, csv_path.stat().st_mtime))
+                                configuration, filtered, csv_path.stat().st_mtime, parameter))
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             errors.append(f'{directory}: {exc}')
     return (runs, errors) if return_errors else runs
@@ -111,8 +150,8 @@ def families(runs):
     """One family per board + identical configuration except Rext."""
     grouped = defaultdict(list)
     for run in runs:
-        grouped[(run.board, run.family)].append(run)
-    return {key: sorted(group, key=lambda r: (r.rext_ohms, r.mtime))
+        grouped[(run.board, run.family, run.parameter)].append(run)
+    return {key: sorted(group, key=lambda r: (r.variable_value, r.mtime))
             for key, group in grouped.items()}
 
 
@@ -176,6 +215,9 @@ def compare(runs, signal='Vin', direction='up', fit=False,
     from matplotlib import colormaps
     if not runs:
         raise ValueError('Select at least one run')
+    parameter = runs[0].parameter
+    if any(run.parameter != parameter for run in runs):
+        raise ValueError('Do not mix Rext and offset-voltage comparisons')
     if signal not in signal_choices(runs):
         raise ValueError(f'{signal} is not present in every selected run')
     if direction not in ('up', 'down'):
@@ -190,18 +232,19 @@ def compare(runs, signal='Vin', direction='up', fit=False,
     colors = [cmap(i / max(1, len(runs)-1)) for i in range(len(runs))]
     duplicate_count = defaultdict(int)
     for run in runs:
-        duplicate_count[run.rext_ohms] += 1
+        duplicate_count[run.variable_value] += 1
 
     fits = []
-    for index, run in enumerate(sorted(runs, key=lambda r:(r.rext_ohms,r.mtime))):
+    for index, run in enumerate(sorted(runs, key=lambda r:(r.variable_value,r.mtime))):
         x_full, y_full = trace(run, signal, direction)
         # Axis visibility is independent of the fit interval. In particular,
         # changing the graph limit must not alter Figure 4.16 fit parameters.
         plot_mask = (x_full * 1000 <= max_plot_ma) if max_plot_ma is not None else np.ones(len(x_full),dtype=bool)
         x, y = x_full[plot_mask], y_full[plot_mask]
         color = colors[index]
-        label = f'Rext = {run.rext_ohms:g} Ω'
-        if duplicate_count[run.rext_ohms] > 1:
+        label = (f'Rext = {run.variable_value:g} Ω' if parameter=='rext'
+                 else f'Voffset = {run.variable_value:g} V')
+        if duplicate_count[run.variable_value] > 1:
             label += f' ({run.run_label})'
         if len(x):
             ax.plot(x * 1000, y, color=color, marker='o', markersize=3.0,
@@ -210,7 +253,9 @@ def compare(runs, signal='Vin', direction='up', fit=False,
             try:
                 result = fit_trace(x_full, y_full, fit_min_ma, fit_max_ma, fit_max_voltage)
             except ValueError as exc:
-                fits.append(dict(rext_ohm=run.rext_ohms, run=str(run.directory),
+                fits.append(dict(rext_ohm=run.variable_value if parameter=='rext' else '',
+                                 offset_setting_v=run.variable_value if parameter=='offset' else '',
+                                 parameter=parameter, run=str(run.directory),
                                  status=str(exc)))
                 continue
             region = result.pop('mask')
@@ -224,7 +269,8 @@ def compare(runs, signal='Vin', direction='up', fit=False,
                              status='ok', **result))
     ax.set_xlabel('Measured input current (mA)')
     ax.set_ylabel(f'{signal} (V)')
-    ax.set_title(title or f'{runs[0].board}: {signal} versus input current — varying Rext')
+    name = 'Rext' if parameter=='rext' else 'offset voltage'
+    ax.set_title(title or f'{runs[0].board}: {signal} versus input current — varying {name}')
     ax.grid(alpha=.3)
     if max_plot_ma is not None:
         ax.set_xlim(0, max_plot_ma)
