@@ -123,7 +123,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
     metadata['point_timings_s']=[]
     fields=['point','direction','timestamp_UTC','board','testpoint','input','unit','sweep_mode','voltage_set_V','voltage_measured_V','voltage_tracking_ok','current_set_A',
             'current_measured_A','supply_voltage_V','current_tracking_ok','mean','capture_std',
-            'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision','positive_endpoint','negative_endpoint','color']
+            'sample_std','within_capture_rms','peak_to_peak','samples','comments','comments_revision','positive_endpoint','negative_endpoint','color','linestyle','marker']
     try:
         if cancel.is_set():raise InterruptedError('Stop requested')
         reader.connect()
@@ -175,7 +175,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                 for m in mappings:
                     stats=futures[m['channel']].result()
                     row=dict(point=index,direction=direction,timestamp_UTC=timestamp,board=m['board'],
-                        testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],color=m.get('color',''),sweep_mode=mode,
+                        testpoint=m['testpoint'],input=m['channel'],unit=units[m['channel']],color=m.get('color',''),linestyle=m.get('linestyle',''),marker=m.get('marker',''),sweep_mode=mode,
                          voltage_set_V=setpoint if mode=='voltage' else args.voltage_limit,
                          voltage_measured_V=voltage,voltage_tracking_ok=(abs(voltage-setpoint)<=max(.005,.02*setpoint)) if mode=='voltage' else '',current_set_A=setpoint if mode=='current' else args.max_current,
                         current_measured_A=measured,supply_voltage_V=voltage,
@@ -218,7 +218,7 @@ def run_mapped(args,profile,cancel=None,on_point=None,supply=None,reader=None,no
                 plot_mapped(rows,out)
                 from sweep_plots import export_sweeps
                 export_sweeps(rows,out,getattr(args,'plot_title','5 RD53b in 3 serial domains'),
-                              getattr(args,'plot_max_ma',100),
+                              getattr(args,'plot_max_v',2.0) if mode=='voltage' else getattr(args,'plot_max_ma',100),
                               configuration='' if getattr(args,'plot_hide_configuration',False) else getattr(args,'plot_configuration',''),
                               show_difference=not getattr(args,'plot_hide_difference',False))
             except Exception as e:metadata['plot_error']=str(e)
