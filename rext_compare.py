@@ -18,6 +18,7 @@ from collections import defaultdict
 
 import numpy as np
 from sweep_plots import load_run
+from config_parameters import variable_family, normalized_name
 
 # Examples: Rext = 750 Ohm, R_ext: 0.75 kOhm, Rext=750Ω
 REXT_PATTERN = re.compile(
@@ -46,8 +47,12 @@ def parse_variable(configuration, parameter='rext'):
     """
     if parameter == 'rext':
         return parse_configuration(configuration)
-    if parameter != 'offset':
-        raise ValueError(f'Unknown comparison parameter: {parameter}')
+    if parameter not in ('offset', 'rext'):
+        parsed = variable_family(configuration, parameter)
+        if parsed is None:
+            return None
+        value, family, _unit = parsed
+        return value, family
     matches = list(OFFSET_PATTERN.finditer(configuration or ''))
     if len(matches) != 1:
         return None
@@ -90,6 +95,7 @@ class Run:
     rows: list
     mtime: float
     parameter: str = 'rext'
+    variable_unit: str = ''
 
     @property
     def variable_value(self):
@@ -124,7 +130,7 @@ def discover(root, return_errors=False, parameter='rext'):
             configuration = str(acquired.get('plot_configuration') or '').strip()
             parsed = parse_variable(configuration, parameter)
             if parsed is None:
-                errors.append(f'{directory}: no unique '+('Rext' if parameter=='rext' else 'offset voltage')+' in acquisition configuration')
+                errors.append(f'{directory}: no unique {parameter} assignment in acquisition configuration')
                 continue
             rext, family = parsed
             rows, _, _ = load_run(directory)
@@ -139,8 +145,11 @@ def discover(root, return_errors=False, parameter='rext'):
                 ]
                 if not filtered:
                     continue
+                assignment = variable_family(configuration, parameter)
+                unit = assignment[2] if assignment else ('Ω' if parameter=='rext' else 'V')
                 runs.append(Run(directory, board, rext, family,
-                                configuration, filtered, csv_path.stat().st_mtime, parameter))
+                                configuration, filtered, csv_path.stat().st_mtime,
+                                parameter, unit))
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             errors.append(f'{directory}: {exc}')
     return (runs, errors) if return_errors else runs
@@ -216,6 +225,8 @@ def compare(runs, signal='Vin', direction='up', fit=False,
     if not runs:
         raise ValueError('Select at least one run')
     parameter = runs[0].parameter
+    display_parameter = 'Rext' if parameter=='rext' else 'Voffset' if parameter=='offset' else parameter
+    unit = runs[0].variable_unit or ('Ω' if parameter=='rext' else 'V' if parameter=='offset' else '')
     if any(run.parameter != parameter for run in runs):
         raise ValueError('Do not mix Rext and offset-voltage comparisons')
     if signal not in signal_choices(runs):
@@ -242,8 +253,7 @@ def compare(runs, signal='Vin', direction='up', fit=False,
         plot_mask = (x_full * 1000 <= max_plot_ma) if max_plot_ma is not None else np.ones(len(x_full),dtype=bool)
         x, y = x_full[plot_mask], y_full[plot_mask]
         color = colors[index]
-        label = (f'Rext = {run.variable_value:g} Ω' if parameter=='rext'
-                 else f'Voffset = {run.variable_value:g} V')
+        label = f'{display_parameter} = {run.variable_value:g}' + (f' {unit}' if unit else '')
         if duplicate_count[run.variable_value] > 1:
             label += f' ({run.run_label})'
         if len(x):
@@ -255,7 +265,8 @@ def compare(runs, signal='Vin', direction='up', fit=False,
             except ValueError as exc:
                 fits.append(dict(rext_ohm=run.variable_value if parameter=='rext' else '',
                                  offset_setting_v=run.variable_value if parameter=='offset' else '',
-                                 parameter=parameter, run=str(run.directory),
+                                 parameter=parameter, variable_value=run.variable_value,
+                                 variable_unit=unit, run=str(run.directory),
                                  status=str(exc)))
                 continue
             region = result.pop('mask')
@@ -267,11 +278,12 @@ def compare(runs, signal='Vin', direction='up', fit=False,
                         color=color, linestyle='--', linewidth=1.9)
             fits.append(dict(rext_ohm=run.variable_value if parameter=='rext' else '',
                              offset_setting_v=run.variable_value if parameter=='offset' else '',
-                             parameter=parameter, run=str(run.directory),
+                             parameter=parameter, variable_value=run.variable_value,
+                             variable_unit=unit, run=str(run.directory),
                              status='ok', **result))
     ax.set_xlabel('Measured input current (mA)')
     ax.set_ylabel(f'{signal} (V)')
-    name = 'Rext' if parameter=='rext' else 'offset voltage'
+    name = display_parameter
     ax.set_title(title or f'{runs[0].board}: {signal} versus input current — varying {name}')
     ax.grid(alpha=.3)
     if max_plot_ma is not None:
@@ -295,7 +307,7 @@ def plot_fit_parameters(fits, title='Rext dependence of fitted parameters', figu
         figure.clear()
     axes = figure.subplots(2, 1, sharex=True)
     parameter = next((row.get('parameter','rext') for row in fits), 'rext')
-    x_field = 'rext_ohm' if parameter=='rext' else 'offset_setting_v'
+    x_field = 'rext_ohm' if parameter=='rext' else 'offset_setting_v' if parameter=='offset' else 'variable_value'
     valid = [entry for entry in fits if entry.get('status') == 'ok'
              and all(math.isfinite(float(entry.get(key, float('nan'))))
                      for key in (x_field, 'slope_ohm', 'offset_v'))]
@@ -317,7 +329,15 @@ def plot_fit_parameters(fits, title='Rext dependence of fitted parameters', figu
                     transform=ax.transAxes, ha='center', va='center')
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3)
-    axes[1].set_xlabel(r'$R_{\mathrm{ext}}$ (Ω)' if parameter=='rext' else 'Configured offset voltage (V)')
+    if parameter=='rext':
+        xlabel = r'$R_{\mathrm{ext}}$ (Ω)'
+    elif parameter=='offset':
+        xlabel = 'Configured offset voltage (V)'
+    else:
+        unit = next((row.get('variable_unit','') for row in fits
+                     if row.get('variable_unit')), '')
+        xlabel = parameter + (f' ({unit})' if unit else '')
+    axes[1].set_xlabel(xlabel)
     axes[0].set_title(title)
     return figure
 
@@ -328,7 +348,7 @@ def save_comparison(figure, fits, destination, runs=None, settings=None,
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     parameter = runs[0].parameter if runs else next((r.get('parameter','rext') for r in fits), 'rext')
-    prefix = 'rext' if parameter=='rext' else 'offset_setting'
+    prefix = 'rext' if parameter=='rext' else 'offset_setting' if parameter=='offset' else normalized_name(parameter)
     for extension in ('png', 'pdf'):
         figure.savefig(destination / f'{prefix}_comparison.{extension}',
                        dpi=300, bbox_inches='tight')
@@ -347,6 +367,7 @@ def save_comparison(figure, fits, destination, runs=None, settings=None,
                     'directory': str(run.directory),
                     'board': run.board,
                     'parameter': run.parameter, 'variable_value': run.variable_value,
+                    'variable_unit': run.variable_unit,
                     'rext_ohm': run.rext_ohms if run.parameter=='rext' else None,
                     'offset_setting_v': run.variable_value if run.parameter=='offset' else None,
                     'configuration': run.configuration,
@@ -357,7 +378,8 @@ def save_comparison(figure, fits, destination, runs=None, settings=None,
             json.dumps(manifest, indent=2, ensure_ascii=False) + '\n',
             encoding='utf-8')
     if fits:
-        keys = ['parameter','rext_ohm','offset_setting_v','run','status','slope_ohm','slope_error_ohm',
+        keys = ['parameter','variable_value','variable_unit','rext_ohm','offset_setting_v',
+                'run','status','slope_ohm','slope_error_ohm',
                 'offset_v','offset_error_v','r2','rmse_v','points']
         with (destination / f'{prefix}_fit_results.csv').open('w', newline='') as handle:
             writer = csv.DictWriter(handle, fieldnames=keys)
@@ -371,7 +393,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', type=Path, nargs='?', default=Path('results'))
     parser.add_argument('--board')
-    parser.add_argument('--vary',choices=('rext','offset'),default='rext')
+    parser.add_argument('--vary',default='rext',
+                        help='Parameter name from acquisition configuration, e.g. rext or vofshalf')
     parser.add_argument('--family', help='Substring of normalized configuration family')
     parser.add_argument('--signal', default='Vin')
     parser.add_argument('--direction', choices=('up','down'), default='up')
@@ -403,7 +426,7 @@ def main():
         fit_min_ma=args.fit_min_ma, fit_max_ma=args.fit_max_ma,
         fit_max_voltage=args.fit_max_voltage, max_plot_ma=args.max_plot_ma,
     )
-    output = args.output or args.root / ('rext_comparisons' if args.vary=='rext' else 'offset_comparisons')
+    output = args.output or args.root / (normalized_name(args.vary) + '_comparisons')
     save_comparison(fig, fit_results, output, selected, {
         'signal': args.signal, 'direction': args.direction, 'fit': args.fit, 'vary': args.vary,
         'fit_min_ma': args.fit_min_ma, 'fit_max_ma': args.fit_max_ma,
@@ -411,8 +434,8 @@ def main():
     })
     print('Plots saved to:', output)
     for row in fit_results:
-        label = (f"Rext={row['rext_ohm']} Ω" if args.vary == 'rext'
-                 else f"Voffset={row['offset_setting_v']} V")
+        label = f"{row['parameter']}={row['variable_value']}" + (
+            f" {row.get('variable_unit','')}" if row.get('variable_unit') else '')
         if row['status'] == 'ok':
             print(f"{label}: slope={row['slope_ohm']:.4g} Ω, "
                   f"Vofs={row['offset_v']:.4g} V, R²={row['r2']:.4g}")
