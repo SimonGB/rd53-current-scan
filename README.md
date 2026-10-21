@@ -669,3 +669,61 @@ the edits.
 
 Run `python -m unittest discover -s tests` to check the archived plot
 style/export round trip.
+
+
+## Compare current sweeps while varying external Rext (Zorn Figure 4.15)
+
+Use **Compare Rext sweeps…** in the GUI header or run
+`python rext_compare_gui.py results/board1`. This is a *read-only* analysis
+window: no connection to the Hameg, PicoScope, or Venelin ADC is made.
+
+For automatic grouping, give each acquisition a configuration such as:
+
+`board #1 in SLDO mode - Rref = 150kOhm, Rext = 750 Ohm`
+
+Keep the rest of the configuration text consistent between scans, and change
+only `Rext`. Accepted values include `750 Ohm`, `750 Ω`, and
+`0.75 kOhm`. The acquisition configuration is read from
+`metadata.json → settings → plot_configuration`, not from the run
+folder's arbitrary display name or any later `plot_presentation.json`
+edits. Scans without a unique `Rext` are skipped.
+
+The comparator searches the selected results folder recursively for
+`measurements.csv` and `metadata.json`, groups matching configurations
+by board and all parameters *other than Rext*, and displays a run table.
+For repeated runs at one Rext, the newest is checked by default; older
+runs can be selected manually. Only genuine **current sweeps** are
+eligible. Select a **single voltage testpoint** (VIN, VOUT, VREF, etc.)
+which is present in every run, and an **up** or **down** sweep.
+It plots that signal versus the **measured input current** (mA),
+with one line for each selected Rext.
+
+Optional **linear fits** use
+`V = R_slope * I + Vofs` where `I` is in amperes. Accordingly,
+`R_slope` has units of ohms. The fit accepts only points inside
+the **manual fit-current interval** and below an optional
+**maximum voltage** (default 2 V). The tool does *not* claim
+that all measurements below 2 V are automatically linear. Fits
+require at least three distinct currents; failed fits are reported,
+not silently discarded. It shows slope, offset, R² and point count.
+
+Click **Save PNG/PDF + fit CSV…** to write `rext_comparison.png`,
+`rext_comparison.pdf`, and (when fitting is enabled)
+`rext_fit_results.csv` to a separate output folder. Original
+measurement folders are never modified.
+
+Headless alternative:
+
+```bash
+python rext_compare.py results/board1 --board board1 --signal Vin \
+    --direction up --fit --fit-min-ma 20 --fit-max-ma 120 \
+    --fit-max-voltage 2.0 --max-plot-ma 200 \
+    --output results/rext_comparisons
+```
+
+When more than one configuration family matches, add
+`--family "rref = 150kohm"`; without disambiguation the CLI
+lists available families instead of mixing different configurations.
+Test the discovery/fit logic with
+`python -m unittest tests.test_rext_compare` (or run all tests
+via `python -m unittest discover -s tests`).
