@@ -41,6 +41,11 @@ def x_label(rows, mode_hint=None):
     mode=sweep_mode(rows) if rows else mode_hint
     return 'Measured supply voltage (V)' if mode=='voltage' else 'Measured supply current (mA)'
 
+def plot_style_override(records, key, default):
+    """Read optional plot styles; old measurement files retain automatic styling."""
+    return next((row[key] for row in records if row.get(key)), default)
+
+
 def voltage_drops(rows):
     """Pair unambiguous local Vin/Vout records at the SAME acquired point."""
     groups = {}
@@ -141,10 +146,10 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                            (r['board'], r['testpoint'], r['unit']) == (board, tp, unit)]
                 records.sort(key=lambda r: r.get('point', 0))
                 kind = signal_kind(tp)
-                marker = 'o' if kind == 'in' else 's' if kind == 'out' else '^'
+                marker = plot_style_override(records, 'marker', 'o' if kind == 'in' else 's' if kind == 'out' else '^')
                 line, = ax.plot([x_value(r) for r in records],
                                 [r['mean'] for r in records], color=next((r.get('color') for r in records if r.get('color')),None) or colors[board],
-                                linestyle=':' if kind == 'in' else '-', marker=marker,
+                                linestyle=plot_style_override(records,'linestyle',':' if kind == 'in' else '-'), marker=marker,
                                 markersize=3.5, markerfacecolor='none',
                                 markeredgewidth=.9, linewidth=1.5,
                                 label=f'{board}: {tp}')
