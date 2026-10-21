@@ -194,27 +194,27 @@ def compare(runs, signal='Vin', direction='up', fit=False,
 
     fits = []
     for index, run in enumerate(sorted(runs, key=lambda r:(r.rext_ohms,r.mtime))):
-        x, y = trace(run, signal, direction)
-        if max_plot_ma is not None:
-            mask = x * 1000 <= max_plot_ma
-            x, y = x[mask], y[mask]
-        if not len(x):
-            continue
+        x_full, y_full = trace(run, signal, direction)
+        # Axis visibility is independent of the fit interval. In particular,
+        # changing the graph limit must not alter Figure 4.16 fit parameters.
+        plot_mask = (x_full * 1000 <= max_plot_ma) if max_plot_ma is not None else np.ones(len(x_full),dtype=bool)
+        x, y = x_full[plot_mask], y_full[plot_mask]
         color = colors[index]
         label = f'Rext = {run.rext_ohms:g} Ω'
         if duplicate_count[run.rext_ohms] > 1:
             label += f' ({run.run_label})'
-        ax.plot(x * 1000, y, color=color, marker='o', markersize=3.0,
+        if len(x):
+            ax.plot(x * 1000, y, color=color, marker='o', markersize=3.0,
                 markerfacecolor='none', linewidth=1.4, label=label)
         if fit:
             try:
-                result = fit_trace(x, y, fit_min_ma, fit_max_ma, fit_max_voltage)
+                result = fit_trace(x_full, y_full, fit_min_ma, fit_max_ma, fit_max_voltage)
             except ValueError as exc:
                 fits.append(dict(rext_ohm=run.rext_ohms, run=str(run.directory),
                                  status=str(exc)))
                 continue
             region = result.pop('mask')
-            x_fit = x[region]
+            x_fit = x_full[region]
             domain = np.array([x_fit.min(), x_fit.max()])
             if draw_fit_lines:
                 ax.plot(domain*1000,
