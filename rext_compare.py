@@ -250,8 +250,8 @@ def plot_fit_parameters(fits, title='Rext dependence of fitted parameters', figu
              and all(math.isfinite(float(entry.get(key, float('nan'))))
                      for key in ('rext_ohm', 'slope_ohm', 'offset_v'))]
     for ax, value, uncertainty, ylabel in [
-            (axes[0], 'slope_ohm', 'slope_error_ohm', r'$R_{\\mathrm{slope}}$ (Ω)'),
-            (axes[1], 'offset_v', 'offset_error_v', r'$V_{\\mathrm{ofs}}$ (V)')]:
+            (axes[0], 'slope_ohm', 'slope_error_ohm', r'$R_{\mathrm{slope}}$ (Ω)'),
+            (axes[1], 'offset_v', 'offset_error_v', r'$V_{\mathrm{ofs}}$ (V)')]:
         values = sorted(valid, key=lambda entry: (entry['rext_ohm'], entry.get('run', '')))
         if values:
             x = np.asarray([entry['rext_ohm'] for entry in values], dtype=float)
@@ -267,7 +267,7 @@ def plot_fit_parameters(fits, title='Rext dependence of fitted parameters', figu
                     transform=ax.transAxes, ha='center', va='center')
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3)
-    axes[1].set_xlabel(r'$R_{\\mathrm{ext}}$ (Ω)')
+    axes[1].set_xlabel(r'$R_{\mathrm{ext}}$ (Ω)')
     axes[0].set_title(title)
     return figure
 
