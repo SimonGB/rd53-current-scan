@@ -39,11 +39,11 @@ class RextCompareWindow(QDialog):
         self.last_figure = None
 
         layout = QVBoxLayout(self)
-        heading = QLabel('Compare input-current sweeps by external resistor')
+        heading = QLabel('Compare input-current sweeps by configuration')
         heading.setStyleSheet('font-size:18px;font-weight:700')
         layout.addWidget(heading)
         help_text = QLabel(
-            'Groups scans with the same recorded configuration except Rext. '
+            'Choose whether to vary Rext or the configured offset voltage. '
             'Choose ONE voltage to overlay. Only current-sweep runs are included. '
             'Raw CSV files and metadata are never modified.')
         help_text.setWordWrap(True)
@@ -67,6 +67,11 @@ class RextCompareWindow(QDialog):
         options = QVBoxLayout(side)
         options.setContentsMargins(2, 2, 2, 2)
         group_form = QFormLayout()
+        self.vary = QComboBox()
+        self.vary.addItem('External resistor (Rext)', 'rext')
+        self.vary.addItem('Configured offset voltage (Voffset)', 'offset')
+        self.vary.currentIndexChanged.connect(self.reload)
+        group_form.addRow('Vary parameter', self.vary)
         self.group = QComboBox()
         self.group.currentIndexChanged.connect(self.refresh_group)
         group_form.addRow('Configuration family', self.group)
@@ -79,7 +84,7 @@ class RextCompareWindow(QDialog):
         group_form.addRow('Direction', self.direction)
         options.addLayout(group_form)
 
-        options.addWidget(QLabel('Included measurements (newest scan per Rext selected):'))
+        options.addWidget(QLabel('Included measurements (newest per parameter value selected):'))
         self.runs = QTableWidget(0, 4)
         self.runs.setHorizontalHeaderLabels(['Use', 'Rext [Ω]', 'Run timestamp', 'Run folder'])
         self.runs.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -150,7 +155,7 @@ class RextCompareWindow(QDialog):
         self.canvas = FigureCanvasQTAgg(self.figure)
         plot_layout.addWidget(NavigationToolbar2QT(self.canvas, plot_widget))
         plot_layout.addWidget(self.canvas, 1)
-        plot_tabs.addTab(plot_widget, 'VIN vs current · Fig. 4.15')
+        plot_tabs.addTab(plot_widget, 'Voltage vs input current')
 
         parameters_widget = QWidget()
         parameters_layout = QVBoxLayout(parameters_widget)
@@ -158,7 +163,7 @@ class RextCompareWindow(QDialog):
         self.parameters_canvas = FigureCanvasQTAgg(self.parameters_figure)
         parameters_layout.addWidget(NavigationToolbar2QT(self.parameters_canvas, parameters_widget))
         parameters_layout.addWidget(self.parameters_canvas, 1)
-        plot_tabs.addTab(parameters_widget, 'Slope and Vofs vs Rext · Fig. 4.16')
+        plot_tabs.addTab(parameters_widget, 'Fit slope and offset')
         splitter.addWidget(plot_tabs)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -175,7 +180,8 @@ class RextCompareWindow(QDialog):
 
     def reload(self):
         try:
-            scans, errors = discover(self.root.text(), return_errors=True)
+            scans, errors = discover(self.root.text(), return_errors=True,
+                                    parameter=self.vary.currentData())
             self.groups = families(scans)
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, 'Cannot search measurements', str(exc))
@@ -183,18 +189,20 @@ class RextCompareWindow(QDialog):
         self.group.blockSignals(True)
         self.group.clear()
         for key, group in sorted(self.groups.items(), key=lambda item:(item[0][0],item[0][1])):
-            board, family = key
-            distinct = len(set(run.rext_ohms for run in group))
-            self.group.addItem(f'{board} · {distinct} Rext values · {family}', key)
+            board, family, _parameter = key
+            distinct = len(set(run.variable_value for run in group))
+            self.group.addItem(f'{board} · {distinct} values · {family}', key)
         self.group.blockSignals(False)
         self.status.setPlainText(
             f'Found {len(scans)} compatible board scans in {len(self.groups)} groups. '
-            f'Skipped {len(errors)} directories without a usable current-sweep Rext configuration.')
+            f'Skipped {len(errors)} directories without a usable current-sweep configuration.')
         self.refresh_group()
 
     def refresh_group(self):
         key = self.group.currentData()
         group = self.groups.get(key, [])
+        self.runs.setHorizontalHeaderLabels(['Use', 'Rext [Ω]' if self.vary.currentData()=='rext'
+                                             else 'Voffset [V]', 'Run timestamp','Run folder'])
         signals = signal_choices(group)
         self.signal.blockSignals(True)
         self.signal.clear()
@@ -209,16 +217,16 @@ class RextCompareWindow(QDialog):
         self.runs.setRowCount(len(group))
         most_recent = {}
         for run in group:
-            if run.rext_ohms not in most_recent or run.mtime > most_recent[run.rext_ohms].mtime:
-                most_recent[run.rext_ohms] = run
+            if run.variable_value not in most_recent or run.mtime > most_recent[run.variable_value].mtime:
+                most_recent[run.variable_value] = run
         for index, run in enumerate(group):
             checkbox = QTableWidgetItem()
             checkbox.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            checkbox.setCheckState(Qt.CheckState.Checked if most_recent[run.rext_ohms] is run
+            checkbox.setCheckState(Qt.CheckState.Checked if most_recent[run.variable_value] is run
                                    else Qt.CheckState.Unchecked)
             self.runs.setItem(index, 0, checkbox)
             for col, value in enumerate(
-                    (f'{run.rext_ohms:g}', run.run_label, str(run.directory)), start=1):
+                    (f'{run.variable_value:g}', run.run_label, str(run.directory)), start=1):
                 item = QTableWidgetItem(value)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 self.runs.setItem(index, col, item)
@@ -265,23 +273,28 @@ class RextCompareWindow(QDialog):
                 max_plot_ma=self.plot_limit.value(), figure=self.figure,
             )
             plot_fit_parameters(result, figure=self.parameters_figure,
-                                title=f'{selected[0].board}: {signal} fit parameters vs Rext')
+                                title=f'{selected[0].board}: {signal} fit parameters vs '
+                                      f'{"Rext" if self.vary.currentData()=="rext" else "offset voltage"}')
             self.canvas.draw_idle()
             self.parameters_canvas.draw_idle()
             self.last_figure = plotted
             self.last_fit_results = result
-            lines = [f'{len(selected)} runs · {len(set(r.rext_ohms for r in selected))} Rext values',
+            lines = [f'{len(selected)} runs · {len(set(r.variable_value for r in selected))} parameter values',
                      f'Voltage: {signal}; sweep: {self.direction.currentText()}']
             for item in result:
                 if item['status'] == 'ok':
-                    lines.append(f"Rext={item['rext_ohm']:g} Ω: slope={item['slope_ohm']:.4g} Ω, "
+                    lines.append(f"{self.fit_label(item)}: slope={item['slope_ohm']:.4g} Ω, "
                                  f"Vofs={item['offset_v']:.4g} V, R²={item['r2']:.4f}; "
                                  f"n={item['points']}")
                 else:
-                    lines.append(f"Rext={item['rext_ohm']:g} Ω: {item['status']}")
+                    lines.append(f"{self.fit_label(item)}: {item['status']}")
             self.status.setPlainText('\n'.join(lines))
         except (ValueError, TypeError, KeyError) as exc:
             self.status.setPlainText(str(exc))
+
+    def fit_label(self,item):
+        return (f"Rext={item['rext_ohm']:g} Ω" if self.vary.currentData()=='rext'
+                else f"Voffset={item['offset_setting_v']:g} V")
 
     def save(self):
         if self.last_figure is None:
@@ -292,8 +305,9 @@ class RextCompareWindow(QDialog):
         if not chosen:
             return
         folder = Path(chosen)
+        prefix = 'rext' if self.vary.currentData()=='rext' else 'offset_setting'
         targets = [folder / f'{name}.{ext}'
-                   for name in ('rext_comparison', 'rext_fit_parameters')
+                   for name in (f'{prefix}_comparison', f'{prefix}_fit_parameters')
                    for ext in ('png', 'pdf')]
         if any(target.exists() for target in targets):
             reply = QMessageBox.question(
@@ -305,6 +319,7 @@ class RextCompareWindow(QDialog):
                 return
         try:
             save_comparison(self.last_figure, self.last_fit_results, folder, self.included(), {
+                'vary': self.vary.currentData(),
                 'signal': self.signal.currentText(),
                 'direction': self.direction.currentText(),
                 'fit': True, 'draw_fit_lines': self.fit.isChecked(),
