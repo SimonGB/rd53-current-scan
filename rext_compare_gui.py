@@ -17,12 +17,13 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QLineEdit, QPushButton, QComboBox, QFileDialog, QMessageBox,
     QCheckBox, QDoubleSpinBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QWidget, QSplitter, QPlainTextEdit,
+    QHeaderView, QWidget, QSplitter, QPlainTextEdit, QTabWidget,
 )
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 
-from rext_compare import discover, families, signal_choices, compare, save_comparison
+from rext_compare import (discover, families, signal_choices, compare,
+                          plot_fit_parameters, save_comparison)
 
 
 class RextCompareWindow(QDialog):
@@ -96,8 +97,8 @@ class RextCompareWindow(QDialog):
         self.plot_limit.valueChanged.connect(self.update_preview)
         plot_form.addRow('Plot max current [mA]', self.plot_limit)
 
-        self.fit = QCheckBox('Overlay linear fits (selected interval only)')
-        self.fit.setChecked(False)
+        self.fit = QCheckBox('Draw fitted lines on overlay')
+        self.fit.setChecked(True)
         self.fit.toggled.connect(self.update_preview)
         plot_form.addRow(self.fit)
 
@@ -121,7 +122,7 @@ class RextCompareWindow(QDialog):
         options.addLayout(plot_form)
 
         caveat = QLabel(
-            'Fit model: V = R_slope × I + Vofs. The slope is reported in Ω (V/A). '
+            'Both plots use fits: V = R_slope × I + Vofs. The slope is in Ω (V/A). '
             'Choose an interval where the trace is approximately linear; '
             'the 2 V cutoff alone does NOT identify that region.')
         caveat.setWordWrap(True)
@@ -142,13 +143,23 @@ class RextCompareWindow(QDialog):
         options.addLayout(actions)
         splitter.addWidget(side)
 
+        plot_tabs = QTabWidget()
         plot_widget = QWidget()
         plot_layout = QVBoxLayout(plot_widget)
         self.figure = Figure(figsize=(8.5, 6))
         self.canvas = FigureCanvasQTAgg(self.figure)
         plot_layout.addWidget(NavigationToolbar2QT(self.canvas, plot_widget))
         plot_layout.addWidget(self.canvas, 1)
-        splitter.addWidget(plot_widget)
+        plot_tabs.addTab(plot_widget, 'VIN vs current · Fig. 4.15')
+
+        parameters_widget = QWidget()
+        parameters_layout = QVBoxLayout(parameters_widget)
+        self.parameters_figure = Figure(figsize=(8.5, 7))
+        self.parameters_canvas = FigureCanvasQTAgg(self.parameters_figure)
+        parameters_layout.addWidget(NavigationToolbar2QT(self.parameters_canvas, parameters_widget))
+        parameters_layout.addWidget(self.parameters_canvas, 1)
+        plot_tabs.addTab(parameters_widget, 'Slope and Vofs vs Rext · Fig. 4.16')
+        splitter.addWidget(plot_tabs)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([440, 780])
@@ -224,33 +235,39 @@ class RextCompareWindow(QDialog):
     def update_preview(self, *unused):
         # Qt may emit valueChanged/currentIndexChanged during widget construction.
         # Never dereference the figure or the run table before both exist.
-        if self._initializing or not hasattr(self, 'figure') or not hasattr(self, 'canvas'):
+        if (self._initializing or not hasattr(self, 'figure') or
+                not hasattr(self, 'canvas') or not hasattr(self, 'parameters_figure')):
             return
         selected = self.included()
         self.last_figure = None
         self.last_fit_results = []
         if not selected:
             self.figure.clear()
+            self.parameters_figure.clear()
             self.canvas.draw_idle()
+            self.parameters_canvas.draw_idle()
             self.status.setPlainText('No measurements selected.')
             return
         signal = self.signal.currentText()
         if not signal:
             self.status.setPlainText('No voltage signal is common to all runs in this group.')
             return
-        if self.fit.isChecked() and self.fit_end.value() <= self.fit_start.value():
+        if self.fit_end.value() <= self.fit_start.value():
             self.status.setPlainText('Fit upper current must exceed lower current.')
             return
         try:
             plotted, result = compare(
                 selected, signal=signal, direction=self.direction.currentText(),
-                fit=self.fit.isChecked(),
-                fit_min_ma=self.fit_start.value() if self.fit.isChecked() else None,
-                fit_max_ma=self.fit_end.value() if self.fit.isChecked() else None,
+                fit=True, draw_fit_lines=self.fit.isChecked(),
+                fit_min_ma=self.fit_start.value(),
+                fit_max_ma=self.fit_end.value(),
                 fit_max_voltage=self.fit_voltage.value(),
                 max_plot_ma=self.plot_limit.value(), figure=self.figure,
             )
+            plot_fit_parameters(result, figure=self.parameters_figure,
+                                title=f'{selected[0].board}: {signal} fit parameters vs Rext')
             self.canvas.draw_idle()
+            self.parameters_canvas.draw_idle()
             self.last_figure = plotted
             self.last_fit_results = result
             lines = [f'{len(selected)} runs · {len(set(r.rext_ohms for r in selected))} Rext values',
@@ -275,7 +292,9 @@ class RextCompareWindow(QDialog):
         if not chosen:
             return
         folder = Path(chosen)
-        targets = [folder / f'rext_comparison.{ext}' for ext in ('png', 'pdf')]
+        targets = [folder / f'{name}.{ext}'
+                   for name in ('rext_comparison', 'rext_fit_parameters')
+                   for ext in ('png', 'pdf')]
         if any(target.exists() for target in targets):
             reply = QMessageBox.question(
                 self, 'Overwrite plots?',
@@ -288,12 +307,12 @@ class RextCompareWindow(QDialog):
             save_comparison(self.last_figure, self.last_fit_results, folder, self.included(), {
                 'signal': self.signal.currentText(),
                 'direction': self.direction.currentText(),
-                'fit': self.fit.isChecked(),
-                'fit_min_ma': self.fit_start.value() if self.fit.isChecked() else None,
-                'fit_max_ma': self.fit_end.value() if self.fit.isChecked() else None,
+                'fit': True, 'draw_fit_lines': self.fit.isChecked(),
+                'fit_min_ma': self.fit_start.value(),
+                'fit_max_ma': self.fit_end.value(),
                 'fit_max_voltage': self.fit_voltage.value(),
                 'plot_max_ma': self.plot_limit.value(),
-            })
+            }, fit_figure=self.parameters_figure)
             QMessageBox.information(self, 'Rext comparison saved', str(folder))
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, 'Could not save comparison', str(exc))
