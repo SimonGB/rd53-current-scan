@@ -49,6 +49,11 @@ def validate_profile(profile):
         color=m.get('color', '')
         if color and (not isinstance(color,str) or not is_color_like(color)):
             raise ValueError(f'Invalid plot color for {m["board"]} / {m["testpoint"]}: {color!r}')
+        for key, allowed in (('linestyle', ('', '-', '--', ':', '-.', 'None')),
+                             ('marker', ('', 'o', 's', '^', 'v', 'D', 'x', '+', '*', '.', 'None'))):
+            value=m.get(key,'')
+            if value not in allowed:
+                raise ValueError(f'Invalid {key} for {m["board"]} / {m["testpoint"]}: {value!r}')
         used.add(channel); targets.add((m['board'],m['testpoint']))
         for n in ('probe','range'):
             if not math.isfinite(float(m.get(n,1))) or float(m.get(n,1))<=0:
