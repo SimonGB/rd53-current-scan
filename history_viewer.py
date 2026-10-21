@@ -1,18 +1,35 @@
-"""Read-only saved-run plot window, independent of acquisition and wiring."""
+"""Non-destructive saved-run plot editor, independent of acquisition and wiring."""
 import math
+import json
+from pathlib import Path
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                             QLabel, QLineEdit, QDoubleSpinBox, QCheckBox,
                             QComboBox, QTabWidget, QPushButton, QFileDialog,
-                            QMessageBox, QScrollArea, QWidget)
+                            QMessageBox, QScrollArea, QWidget,
+                            QTableWidget, QTableWidgetItem, QHeaderView)
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QBrush
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from sweep_plots import load_run, draw_sweep, export_sweeps, sweep_mode
+from plotting_editor import edit_style, STYLE_KEYS
 
 
 class HistoryViewer(QDialog):
     def __init__(self, path, parent=None):
         super().__init__(parent)
         self.rows, settings, self.directory = load_run(path)
+        # Keep presentation choices independent of original measurement data.
+        presentation_path = self.directory / 'plot_presentation.json'
+        presentation = json.loads(presentation_path.read_text(encoding='utf-8')) if presentation_path.exists() else {}
+        if not isinstance(presentation, dict):
+            raise ValueError('plot_presentation.json must contain a JSON object')
+        settings = {**settings, **presentation.get('settings', {})}
+        for entry in presentation.get('styles', []):
+            for record in self.rows:
+                if all(record.get(k) == entry.get(k) for k in ('board', 'testpoint', 'unit')):
+                    for key in STYLE_KEYS:
+                        record[key] = entry.get(key, '')
         self.setWindowTitle('Saved measurements · ' + self.directory.name)
         self.resize(1100, 850)
         layout = QVBoxLayout(self)
@@ -42,6 +59,16 @@ class HistoryViewer(QDialog):
         for board in dict.fromkeys(r['board'] for r in self.rows):
             self.board.addItem(board, board)
         controls.addRow('Board', self.board)
+        self.plotting = QTableWidget(0, 4)
+        self.plotting.setHorizontalHeaderLabels(['Board', 'Testpoint', 'Unit', 'Plotting'])
+        self.plotting.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.plotting.setMinimumHeight(95)
+        self.plotting.setMaximumHeight(185)
+        self.plotting.setToolTip('Double-click a Plotting cell to edit color, line and marker.')
+        layout.addWidget(QLabel('Testpoint plotting — double-click a Plotting cell:'))
+        layout.addWidget(self.plotting)
+        self.plotting.cellDoubleClicked.connect(self.edit_plotting)
+        self.refresh_style_table()
         explanation = QLabel('Vin − Vout is the regulator voltage drop, not shunted current. '
                              'Only paired local voltage measurements at the same scan point are subtracted.')
         explanation.setWordWrap(True);layout.addWidget(explanation)
@@ -65,6 +92,61 @@ class HistoryViewer(QDialog):
         self.maximum.valueChanged.connect(self.redraw)
         self.board.currentIndexChanged.connect(self.redraw)
         self.redraw()
+
+    def refresh_style_table(self):
+        """One style row per signal, shared across both sweep directions."""
+        keys = list(dict.fromkeys((r['board'], r['testpoint'], r['unit']) for r in self.rows))
+        self.style_targets = keys
+        self.plotting.setRowCount(len(keys))
+        for index, key in enumerate(keys):
+            sample = next(r for r in self.rows if (r['board'], r['testpoint'], r['unit']) == key)
+            for col, value in enumerate(key):
+                item = QTableWidgetItem(str(value))
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.plotting.setItem(index, col, item)
+            style = {name: sample.get(name, '') or '' for name in STYLE_KEYS}
+            item = QTableWidgetItem(' · '.join(v for v in style.values() if v) or 'Auto')
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            item.setToolTip('Double-click to change color, line pattern and symbol.')
+            if style['color'] and QColor(style['color']).isValid():
+                item.setBackground(QBrush(QColor(style['color'])))
+            self.plotting.setItem(index, 3, item)
+
+    def edit_plotting(self, row, col):
+        if col != 3:
+            return
+        key = self.style_targets[row]
+        sample = next(r for r in self.rows
+                      if (r['board'], r['testpoint'], r['unit']) == key)
+        previous = {name: sample.get(name, '') or '' for name in STYLE_KEYS}
+        selected = edit_style(self, f'{key[0]} / {key[1]} ({key[2]})', previous)
+        if selected is None:
+            return
+        for record in self.rows:
+            if (record['board'], record['testpoint'], record['unit']) == key:
+                record.update(selected)
+        self.refresh_style_table()
+        self.redraw()
+
+    def presentation(self):
+        """Non-destructive plot settings to save next to the exported figures."""
+        styles = []
+        for key in self.style_targets:
+            sample = next(r for r in self.rows
+                          if (r['board'], r['testpoint'], r['unit']) == key)
+            styles.append(dict(board=key[0], testpoint=key[1], unit=key[2],
+                               **{name: sample.get(name, '') or '' for name in STYLE_KEYS}))
+        return {
+            'version': 1,
+            'settings': {
+                'plot_title': self.title.text(),
+                'plot_configuration': self.configuration.text(),
+                'plot_hide_configuration': not self.show_configuration.isChecked(),
+                'plot_hide_difference': not self.show_difference.isChecked(),
+                'plot_max_v' if self.mode == 'voltage' else 'plot_max_ma': self.maximum.value(),
+            },
+            'styles': styles,
+        }
 
     def visible_rows(self):
         board = self.board.currentData()
@@ -99,6 +181,10 @@ class HistoryViewer(QDialog):
             export_sweeps(self.visible_rows(), output, self.title.text(),
                           self.maximum.value(), self.note(),
                           show_difference=self.show_difference.isChecked(), color_rows=self.rows)
+            # A sidecar preserves edits without rewriting measurement CSV or metadata.
+            (output / 'plot_presentation.json').write_text(
+                json.dumps(self.presentation(), indent=2, ensure_ascii=False) + '\n',
+                encoding='utf-8')
             QMessageBox.information(self, 'Plots exported', str(output))
         except Exception as exc:
             QMessageBox.warning(self, 'Export failed', str(exc))
