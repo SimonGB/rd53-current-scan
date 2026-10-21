@@ -709,8 +709,10 @@ not silently discarded. It shows slope, offset, R² and point count.
 
 Click **Save PNG/PDF + fit CSV…** to write `rext_comparison.png`,
 `rext_comparison.pdf`, and (when fitting is enabled)
-`rext_fit_results.csv` to a separate output folder. Original
-measurement folders are never modified.
+`rext_fit_results.csv` to a separate output folder. The companion
+`rext_comparison_manifest.json` records the selected source runs, resistor
+values, voltage channel, sweep direction, and fit/plot intervals for
+reproducibility. Original measurement folders are never modified.
 
 Headless alternative:
 
