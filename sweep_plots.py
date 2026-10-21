@@ -143,7 +143,7 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                 kind = signal_kind(tp)
                 marker = 'o' if kind == 'in' else 's' if kind == 'out' else '^'
                 line, = ax.plot([x_value(r) for r in records],
-                                [r['mean'] for r in records], color=colors[board],
+                                [r['mean'] for r in records], color=next((r.get('color') for r in records if r.get('color')),None) or colors[board],
                                 linestyle=':' if kind == 'in' else '-', marker=marker,
                                 markersize=3.5, markerfacecolor='none',
                                 markeredgewidth=.9, linewidth=1.5,
@@ -189,7 +189,7 @@ def draw_sweep(figure, rows, direction, title, maximum=100, color_rows=None, con
                 records = sorted((r for r in drops if r['board'] == board), key=lambda r: r['point'])
                 if records:
                     drop_ax.plot([x_value(r) for r in records],
-                                 [r['mean'] for r in records], color=colors[board],
+                                 [r['mean'] for r in records], color=next((r.get('color') for r in records if r.get('color')),None) or colors[board],
                                  linestyle='-', marker='D', markersize=3,
                                  markerfacecolor='none', linewidth=1.3, label=board)
             drop_ax.set_ylabel(r'$V_\mathrm{in}-V_\mathrm{out}$ (V)')
