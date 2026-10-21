@@ -155,9 +155,9 @@ class Window(QMainWindow):
         self.show_difference=QCheckBox('Show Vin − Vout subplot');self.show_difference.setChecked(True);form.addRow(self.show_difference)
         self.show_difference.setToolTip('Regulator voltage drop, not shunted current. Requires Vin and Vout at the same point.')
         self.show_difference.toggled.connect(self.redraw)
-        self.plot_max=QDoubleSpinBox();self.plot_max.setRange(.001,10000);self.plot_max.setValue(100);form.addRow('Plot maximum [mA]',self.plot_max)
-        self.plot_max_v=QDoubleSpinBox();self.plot_max_v.setRange(.001,32);self.plot_max_v.setDecimals(3);self.plot_max_v.setValue(2.0);form.addRow('Plot maximum [V]',self.plot_max_v)
-        self.plot_max_v.valueChanged.connect(self.redraw)
+        self._plot_max_presets={'Current':100.0,'Voltage':2.0}
+        self.plot_max=QDoubleSpinBox();self.plot_max.setRange(.001,10000);self.plot_max.setDecimals(3);self.plot_max.setValue(100)
+        form.addRow('Plot maximum [mA]',self.plot_max)
         self.update_sweep_mode()
         self.plot_title.textChanged.connect(self.redraw);self.plot_max.valueChanged.connect(self.redraw)
         self.save_plots_button=QPushButton('Save Plots…')
@@ -603,6 +603,7 @@ class Window(QMainWindow):
         mode=self.sweep_mode.currentText()
         previous=self._last_sweep_mode
         if mode != previous:
+            self._plot_max_presets[previous]=self.plot_max.value()
             self._sweep_presets[previous] = {
                 key:self.fields[key].value() for key in ('start','stop','step')
             }
@@ -624,8 +625,14 @@ class Window(QMainWindow):
         compliance_label=self.scan_form.labelForField(self.fields['voltage_limit'])
         if compliance_label is not None:
             compliance_label.setText('Maximum voltage [V]' if voltage else 'Compliance [V]')
-        self.plot_max.setEnabled(not voltage)
-        self.plot_max_v.setEnabled(voltage)
+        self.plot_max.blockSignals(True)
+        self.plot_max.setRange(.001,32 if voltage else 10000)
+        self.plot_max.setDecimals(3)
+        self.plot_max.setValue(self._plot_max_presets[mode])
+        self.plot_max.blockSignals(False)
+        max_label=self.scan_form.labelForField(self.plot_max)
+        if max_label is not None:
+            max_label.setText('Plot maximum [V]' if voltage else 'Plot maximum [mA]')
         self._last_sweep_mode=mode
         if hasattr(self,'canvas'):
             self.redraw()
@@ -644,7 +651,7 @@ class Window(QMainWindow):
                   '--start',str(points['start'].value()/divisor),'--stop',str(points['stop'].value()/divisor),
                   '--step',str(points['step'].value()/divisor),'--max-current',str(self.fields['max_current'].value()/1000),
                   '--voltage-limit',str(self.fields['voltage_limit'].value())]
-            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.plot_title=self.plot_title.text();args.plot_configuration=self.plot_configuration.text();args.plot_hide_configuration=not self.show_configuration.isChecked();args.plot_hide_difference=not self.show_difference.isChecked();args.plot_max_ma=self.plot_max.value();args.plot_max_v=self.plot_max_v.value();args.comments=self.comments.toPlainText()
+            args=parser().parse_args(argv);args.port=self.port.text();args.channel=self.hmp.value();args.name=self.name.text();args.plot_title=self.plot_title.text();args.plot_configuration=self.plot_configuration.text();args.plot_hide_configuration=not self.show_configuration.isChecked();args.plot_hide_difference=not self.show_difference.isChecked();args.plot_max_ma=self._plot_max_presets['Current'] if voltage_mode else self.plot_max.value();args.plot_max_v=self.plot_max.value() if voltage_mode else self._plot_max_presets['Voltage'];args.comments=self.comments.toPlainText()
             for n in ('settle','capture_time','sample_rate'):setattr(args,n,self.fields[n].value())
             args.captures=self.captures.value();args.reverse=self.reverse.isChecked();args.simulate=self.sim.isChecked();args.save_waveforms=self.raw.isChecked()
             from scan import current_points
@@ -706,7 +713,10 @@ class Window(QMainWindow):
         return self.sweep_mode.currentText().lower()
 
     def plot_limit(self, rows=None):
-        return self.plot_max_v.value() if self.plot_axis_mode(rows)=='voltage' else self.plot_max.value()
+        mode='Voltage' if self.plot_axis_mode(rows)=='voltage' else 'Current'
+        if mode==self.sweep_mode.currentText():
+            return self.plot_max.value()
+        return self._plot_max_presets[mode]
 
     def save_plots(self):
         """Save visible up/down sweeps as PNG/PDF without a new measurement."""
