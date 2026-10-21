@@ -229,13 +229,29 @@ def compare(runs, signal='Vin', direction='up', fit=False,
     return figure, fits
 
 
-def save_comparison(figure, fits, destination):
+def save_comparison(figure, fits, destination, runs=None, settings=None):
     """Write publication PNG/PDF and fit CSV, never modify source runs."""
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     for extension in ('png', 'pdf'):
         figure.savefig(destination / f'rext_comparison.{extension}',
                        dpi=300, bbox_inches='tight')
+    if runs is not None:
+        manifest = {
+            'analysis': 'rext_current_sweep_overlay',
+            'settings': settings or {},
+            'sources': [
+                {
+                    'directory': str(run.directory),
+                    'board': run.board,
+                    'rext_ohm': run.rext_ohms,
+                    'configuration': run.configuration,
+                } for run in runs
+            ],
+        }
+        (destination / 'rext_comparison_manifest.json').write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + '\n',
+            encoding='utf-8')
     if fits:
         keys = ['rext_ohm','run','status','slope_ohm','offset_v','r2','rmse_v','points']
         with (destination / 'rext_fit_results.csv').open('w', newline='') as handle:
@@ -282,7 +298,11 @@ def main():
         fit_max_voltage=args.fit_max_voltage, max_plot_ma=args.max_plot_ma,
     )
     output = args.output or args.root / 'rext_comparisons'
-    save_comparison(fig, fit_results, output)
+    save_comparison(fig, fit_results, output, selected, {
+        'signal': args.signal, 'direction': args.direction, 'fit': args.fit,
+        'fit_min_ma': args.fit_min_ma, 'fit_max_ma': args.fit_max_ma,
+        'fit_max_voltage': args.fit_max_voltage, 'plot_max_ma': args.max_plot_ma,
+    })
     print('Plots saved to:', output)
     for row in fit_results:
         if row['status'] == 'ok':
