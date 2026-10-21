@@ -729,3 +729,33 @@ lists available families instead of mixing different configurations.
 Test the discovery/fit logic with
 `python -m unittest tests.test_rext_compare` (or run all tests
 via `python -m unittest discover -s tests`).
+
+
+### Figure 4.16: fitted slope and offset versus Rext
+
+The **Compare Rext sweeps…** window now has two plotting tabs:
+**VIN vs current · Fig. 4.15** (measured voltage versus measured input current)
+and **Slope and Vofs vs Rext · Fig. 4.16**. Both use the same selected runs,
+voltage testpoint, sweep direction, and adjustable current/voltage fitting
+interval. The checkbox now controls only whether dashed fitted lines are
+superimposed on the first tab. Parameter fits for the second tab are always
+calculated, even when that checkbox is off.
+
+The second tab shows two panels:
+- `R_slope` (Ω), from the slope of `V = R_slope * I + Vofs`, against `Rext` (Ω).
+- `Vofs` (V), the fitted intercept, against `Rext` (Ω).
+
+Each successful fit contributes one data point. Repeated measurements at
+the same resistor value are kept separate; failed fits remain reported in
+the status panel and CSV but are not shown as points. Vertical error bars
+are the **ordinary, unweighted least-squares standard errors** estimated
+from fit residuals. They are *not* a complete measurement uncertainty:
+correlated scan-point errors, instrument accuracy, current-meter calibration
+and systematic shifts are not included. Fit range selection matters
+especially in the startup transition.
+
+**Save PNG/PDF + fit CSV…** now also exports
+`rext_fit_parameters.png` and `rext_fit_parameters.pdf`, in addition to
+`rext_comparison.png/.pdf`, `rext_fit_results.csv` and the source
+manifest. The fit CSV includes `slope_error_ohm` and `offset_error_v`.
+The CLI creates parameter figures when invoked with `--fit`.
