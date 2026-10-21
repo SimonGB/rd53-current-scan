@@ -31,9 +31,9 @@ REXT_PATTERN = re.compile(
 # Offset-voltage setpoints are experimental configuration values, not the
 # intercept Vofs extracted from fitting the VIN-versus-current relationship.
 OFFSET_PATTERN = re.compile(
-    r"(?<!\\w)(?:V[_\\s]*(?:offset|off|ofs)|offset[_\\s]*voltage)\\s*[:=]\\s*"
-    r"(?P<value>[+-]?(?:\\d+(?:[.,]\\d*)?|[.,]\\d+))\\s*"
-    r"(?P<unit>m\\s*V|V)?(?!\\w)",
+    r"(?<!\w)(?:V[_\s]*(?:offset|off|ofs)|offset[_\s]*voltage)\s*[:=]\s*"
+    r"(?P<value>[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+))\s*"
+    r"(?P<unit>m\s*V|V)?(?!\w)",
     flags=re.IGNORECASE,
 )
 
@@ -265,7 +265,9 @@ def compare(runs, signal='Vin', direction='up', fit=False,
                 ax.plot(domain*1000,
                         result['slope_ohm']*domain + result['offset_v'],
                         color=color, linestyle='--', linewidth=1.9)
-            fits.append(dict(rext_ohm=run.rext_ohms, run=str(run.directory),
+            fits.append(dict(rext_ohm=run.variable_value if parameter=='rext' else '',
+                             offset_setting_v=run.variable_value if parameter=='offset' else '',
+                             parameter=parameter, run=str(run.directory),
                              status='ok', **result))
     ax.set_xlabel('Measured input current (mA)')
     ax.set_ylabel(f'{signal} (V)')
@@ -292,15 +294,17 @@ def plot_fit_parameters(fits, title='Rext dependence of fitted parameters', figu
     else:
         figure.clear()
     axes = figure.subplots(2, 1, sharex=True)
+    parameter = next((row.get('parameter','rext') for row in fits), 'rext')
+    x_field = 'rext_ohm' if parameter=='rext' else 'offset_setting_v'
     valid = [entry for entry in fits if entry.get('status') == 'ok'
              and all(math.isfinite(float(entry.get(key, float('nan'))))
-                     for key in ('rext_ohm', 'slope_ohm', 'offset_v'))]
+                     for key in (x_field, 'slope_ohm', 'offset_v'))]
     for ax, value, uncertainty, ylabel in [
             (axes[0], 'slope_ohm', 'slope_error_ohm', r'$R_{\mathrm{slope}}$ (Ω)'),
             (axes[1], 'offset_v', 'offset_error_v', r'$V_{\mathrm{ofs}}$ (V)')]:
-        values = sorted(valid, key=lambda entry: (entry['rext_ohm'], entry.get('run', '')))
+        values = sorted(valid, key=lambda entry: (entry[x_field], entry.get('run', '')))
         if values:
-            x = np.asarray([entry['rext_ohm'] for entry in values], dtype=float)
+            x = np.asarray([entry[x_field] for entry in values], dtype=float)
             y = np.asarray([entry[value] for entry in values], dtype=float)
             sigma = np.asarray([entry.get(uncertainty, float('nan')) for entry in values],
                                dtype=float)
@@ -313,7 +317,7 @@ def plot_fit_parameters(fits, title='Rext dependence of fitted parameters', figu
                     transform=ax.transAxes, ha='center', va='center')
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3)
-    axes[1].set_xlabel(r'$R_{\mathrm{ext}}$ (Ω)')
+    axes[1].set_xlabel(r'$R_{\mathrm{ext}}$ (Ω)' if parameter=='rext' else 'Configured offset voltage (V)')
     axes[0].set_title(title)
     return figure
 
@@ -323,35 +327,39 @@ def save_comparison(figure, fits, destination, runs=None, settings=None,
     """Write publication PNG/PDF and fit CSV, never modify source runs."""
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
+    parameter = runs[0].parameter if runs else next((r.get('parameter','rext') for r in fits), 'rext')
+    prefix = 'rext' if parameter=='rext' else 'offset_setting'
     for extension in ('png', 'pdf'):
-        figure.savefig(destination / f'rext_comparison.{extension}',
+        figure.savefig(destination / f'{prefix}_comparison.{extension}',
                        dpi=300, bbox_inches='tight')
     if fit_figure is None and fits:
         fit_figure = plot_fit_parameters(fits)
     if fit_figure is not None:
         for extension in ('png', 'pdf'):
-            fit_figure.savefig(destination / f'rext_fit_parameters.{extension}',
+            fit_figure.savefig(destination / f'{prefix}_fit_parameters.{extension}',
                                dpi=300, bbox_inches='tight')
     if runs is not None:
         manifest = {
-            'analysis': 'rext_current_sweep_overlay',
+            'analysis': f'{parameter}_current_sweep_overlay',
             'settings': settings or {},
             'sources': [
                 {
                     'directory': str(run.directory),
                     'board': run.board,
-                    'rext_ohm': run.rext_ohms,
+                    'parameter': run.parameter, 'variable_value': run.variable_value,
+                    'rext_ohm': run.rext_ohms if run.parameter=='rext' else None,
+                    'offset_setting_v': run.variable_value if run.parameter=='offset' else None,
                     'configuration': run.configuration,
                 } for run in runs
             ],
         }
-        (destination / 'rext_comparison_manifest.json').write_text(
+        (destination / f'{prefix}_comparison_manifest.json').write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + '\n',
             encoding='utf-8')
     if fits:
-        keys = ['rext_ohm','run','status','slope_ohm','slope_error_ohm',
+        keys = ['parameter','rext_ohm','offset_setting_v','run','status','slope_ohm','slope_error_ohm',
                 'offset_v','offset_error_v','r2','rmse_v','points']
-        with (destination / 'rext_fit_results.csv').open('w', newline='') as handle:
+        with (destination / f'{prefix}_fit_results.csv').open('w', newline='') as handle:
             writer = csv.DictWriter(handle, fieldnames=keys)
             writer.writeheader()
             for fit in fits:
@@ -363,6 +371,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', type=Path, nargs='?', default=Path('results'))
     parser.add_argument('--board')
+    parser.add_argument('--vary',choices=('rext','offset'),default='rext')
     parser.add_argument('--family', help='Substring of normalized configuration family')
     parser.add_argument('--signal', default='Vin')
     parser.add_argument('--direction', choices=('up','down'), default='up')
@@ -373,7 +382,7 @@ def main():
     parser.add_argument('--max-plot-ma', type=float)
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
-    runs, errors = discover(args.root, return_errors=True)
+    runs, errors = discover(args.root, return_errors=True, parameter=args.vary)
     groups = families(runs)
     eligible = [(key, group) for key, group in groups.items()
                 if (args.board is None or key[0] == args.board)
@@ -382,7 +391,7 @@ def main():
         print('Available configuration families:')
         for (board, family), group in groups.items():
             print(f'  {board}: {family} ({len(group)} runs, '
-                  f'{len(set(r.rext_ohms for r in group))} Rext values)')
+                  f'{len(set(r.variable_value for r in group))} values)')
         if errors:
             print(f'Ignored {len(errors)} incompatible run folders.')
         if not eligible:
@@ -394,19 +403,21 @@ def main():
         fit_min_ma=args.fit_min_ma, fit_max_ma=args.fit_max_ma,
         fit_max_voltage=args.fit_max_voltage, max_plot_ma=args.max_plot_ma,
     )
-    output = args.output or args.root / 'rext_comparisons'
+    output = args.output or args.root / ('rext_comparisons' if args.vary=='rext' else 'offset_comparisons')
     save_comparison(fig, fit_results, output, selected, {
-        'signal': args.signal, 'direction': args.direction, 'fit': args.fit,
+        'signal': args.signal, 'direction': args.direction, 'fit': args.fit, 'vary': args.vary,
         'fit_min_ma': args.fit_min_ma, 'fit_max_ma': args.fit_max_ma,
         'fit_max_voltage': args.fit_max_voltage, 'plot_max_ma': args.max_plot_ma,
     })
     print('Plots saved to:', output)
     for row in fit_results:
+        label = (f"Rext={row['rext_ohm']} Ω" if args.vary == 'rext'
+                 else f"Voffset={row['offset_setting_v']} V")
         if row['status'] == 'ok':
-            print(f"Rext={row['rext_ohm']:g} Ω: slope={row['slope_ohm']:.4g} Ω, "
+            print(f"{label}: slope={row['slope_ohm']:.4g} Ω, "
                   f"Vofs={row['offset_v']:.4g} V, R²={row['r2']:.4g}")
         else:
-            print(f"Rext={row['rext_ohm']:g} Ω: {row['status']}")
+            print(f"{label}: {row['status']}")
 
 
 if __name__ == '__main__':
