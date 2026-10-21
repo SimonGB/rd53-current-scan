@@ -30,7 +30,7 @@ class RextCompareWindow(QDialog):
     """Load and compare original data without opening instruments or altering runs."""
     def __init__(self, root='results', parent=None):
         super().__init__(parent)
-        self.setWindowTitle('RD53 · Compare Rext current sweeps')
+        self.setWindowTitle('RD53 · Compare configuration sweeps')
         self.resize(1220, 850)
         self._initializing = True
         self.groups = {}
@@ -141,7 +141,7 @@ class RextCompareWindow(QDialog):
         actions = QHBoxLayout()
         redraw = QPushButton('Generate overlay')
         redraw.clicked.connect(self.update_preview)
-        save = QPushButton('Save PNG/PDF + fit CSV…')
+        save = QPushButton('Save both plots + fit CSV…')
         save.clicked.connect(self.save)
         actions.addWidget(redraw)
         actions.addWidget(save)
