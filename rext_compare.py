@@ -389,7 +389,7 @@ def main():
                 and (args.family is None or args.family.casefold() in key[1])]
     if len(eligible) != 1:
         print('Available configuration families:')
-        for (board, family), group in groups.items():
+        for (board, family, _parameter), group in groups.items():
             print(f'  {board}: {family} ({len(group)} runs, '
                   f'{len(set(r.variable_value for r in group))} values)')
         if errors:
