@@ -270,6 +270,76 @@ class RextCompareTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_dynamic_parameter_discovery_and_vofshalf_grouping(self):
+        from config_parameters import discovered_parameters, extract_assignments
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        example = ('board #1 in SLDO mode - Rref = 150kOhm, '
+                   'Rext = 750 Ohm, Vofshalf = 400 mV')
+        data = {item['name']: item for item in extract_assignments(example)}
+        self.assertEqual(set(data), {'rref', 'rext', 'vofshalf'})
+        self.assertEqual(data['rref']['value'],150000)
+        self.assertEqual(data['vofshalf']['value'],.4)
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for index, (rext, value, unit) in enumerate(
+                    [(750,400,'mV'),(750,.6,'V'),(750,.8,'V'),(900,.5,'V')]):
+                folder=make_run(root,str(index),rext,slope=1+index*.1)
+                meta=folder/'metadata.json'
+                metadata=json.loads(meta.read_text())
+                metadata['settings']['plot_configuration'] += f', Vofshalf = {value:g} {unit}'
+                meta.write_text(json.dumps(metadata))
+            proposed=discovered_parameters(root)
+            labels={key:(label,unit,count) for key,label,unit,count in proposed}
+            self.assertEqual(labels['vofshalf'],('Vofshalf','V',4))
+            self.assertIn('rref',labels)
+            self.assertIn('rext',labels)
+            runs=discover(root,parameter='vofshalf')
+            self.assertEqual(len(runs),4)
+            grouped=families(runs)
+            self.assertEqual(len(grouped),2)
+            chosen=next(group for group in grouped.values() if len(group)==3)
+            self.assertEqual([run.variable_value for run in chosen],[.4,.6,.8])
+            figure,fits=compare(chosen,'Vin',fit=True,fit_min_ma=10,fit_max_ma=90)
+            self.assertEqual([entry['variable_value'] for entry in fits],[.4,.6,.8])
+            summary=plot_fit_parameters(fits)
+            self.assertEqual(summary.axes[-1].get_xlabel(),'vofshalf (V)')
+            FigureCanvasAgg(summary).draw()
+            output=root/'summary'
+            save_comparison(figure,fits,output,chosen)
+            self.assertTrue((output/'vofshalf_comparison.pdf').is_file())
+            self.assertTrue((output/'vofshalf_fit_parameters.pdf').is_file())
+            with (output/'vofshalf_fit_results.csv').open() as fh:
+                self.assertIn('variable_value',fh.readline())
+
+    def test_dynamic_parameter_gui_suggestions(self):
+        import os
+        os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from rext_compare_gui import RextCompareWindow
+        except ImportError:
+            self.skipTest('PyQt6 is optional')
+        app=QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for index, value in enumerate((.4,.6)):
+                folder=make_run(root,str(index),750)
+                meta=folder/'metadata.json'
+                data=json.loads(meta.read_text())
+                data['settings']['plot_configuration'] += f', Vofshalf = {value} V'
+                meta.write_text(json.dumps(data))
+            viewer=RextCompareWindow(root)
+            try:
+                index=viewer.vary.findData('vofshalf')
+                self.assertGreater(index,0)
+                self.assertIn('Vofshalf',viewer.vary.itemText(index))
+                viewer.vary.setCurrentIndex(index)
+                self.assertEqual(viewer.runs.rowCount(),2)
+                self.assertIn('Vofshalf',viewer.runs.horizontalHeaderItem(1).text())
+                self.assertEqual(len(viewer.parameters_figure.axes),2)
+            finally:
+                viewer.close()
+
 
 if __name__=='__main__':
     unittest.main()
