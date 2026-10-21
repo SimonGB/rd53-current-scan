@@ -646,3 +646,26 @@ For previously saved voltage scans, use **Open old measurements…** and change
 the axis maximum before pressing **Save Plots…** to regenerate the old files.
 
 Validation: `python -m unittest discover -s tests`.
+
+
+### Re-style archived measurements (without modifying original data)
+
+Use **Open old measurements…** and select the saved `metadata.json` or
+`measurements.csv`. The archive window now contains a **Testpoint plotting**
+table with a **Plotting** column. Double-click any signal to select
+**Auto** or a **Custom** line color, line pattern and marker. Changing one
+signal updates both upward and downward figures immediately; other boards
+retain their existing colors.
+
+Click **Save Plots…** to export PDF and PNG as before. The archive editor
+also writes `plot_presentation.json` to the chosen export folder, containing
+the title, configuration, visibility, axis maximum and the selected styles.
+The original `measurements.csv` and `metadata.json` are **never changed**.
+When saving to the run's own folder, reopening that measurement restores these
+presentation edits. `sweep_plots.py` also respects that file when it sits
+beside the original run. When saving elsewhere, copy the JSON sidecar back
+into the original run folder if you also want the next reopen there to restore
+the edits.
+
+Run `python -m unittest discover -s tests` to check the archived plot
+style/export round trip.
