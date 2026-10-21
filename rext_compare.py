@@ -156,19 +156,21 @@ def fit_trace(x, y, min_ma=None, max_ma=None, max_voltage=2.0):
     xf, yf = x[mask], y[mask]
     if len(np.unique(xf)) < 3:
         raise ValueError('Fit needs at least 3 distinct currents in the selected interval')
-    slope, offset = np.polyfit(xf, yf, 1)
+    (slope, offset), covariance = np.polyfit(xf, yf, 1, cov=True)
+    slope_error, offset_error = np.sqrt(np.diag(covariance))
     prediction = slope * xf + offset
     rss = float(np.sum((yf - prediction)**2))
     tss = float(np.sum((yf - yf.mean())**2))
     r2 = 1 - rss/tss if tss > 0 else float('nan')
-    return dict(slope_ohm=float(slope), offset_v=float(offset),
+    return dict(slope_ohm=float(slope), slope_error_ohm=float(slope_error),
+                offset_v=float(offset), offset_error_v=float(offset_error),
                 r2=r2, rmse_v=float(np.sqrt(rss/len(xf))),
                 points=len(xf), mask=mask)
 
 
 def compare(runs, signal='Vin', direction='up', fit=False,
             fit_min_ma=None, fit_max_ma=None, fit_max_voltage=2.0,
-            max_plot_ma=None, title=None, figure=None):
+            max_plot_ma=None, title=None, figure=None, draw_fit_lines=True):
     """Return a Matplotlib Figure and fit result table."""
     from matplotlib.figure import Figure
     from matplotlib import colormaps
@@ -214,9 +216,10 @@ def compare(runs, signal='Vin', direction='up', fit=False,
             region = result.pop('mask')
             x_fit = x[region]
             domain = np.array([x_fit.min(), x_fit.max()])
-            ax.plot(domain*1000,
-                    result['slope_ohm']*domain + result['offset_v'],
-                    color=color, linestyle='--', linewidth=1.9)
+            if draw_fit_lines:
+                ax.plot(domain*1000,
+                        result['slope_ohm']*domain + result['offset_v'],
+                        color=color, linestyle='--', linewidth=1.9)
             fits.append(dict(rext_ohm=run.rext_ohms, run=str(run.directory),
                              status='ok', **result))
     ax.set_xlabel('Measured input current (mA)')
@@ -229,13 +232,60 @@ def compare(runs, signal='Vin', direction='up', fit=False,
     return figure, fits
 
 
-def save_comparison(figure, fits, destination, runs=None, settings=None):
+def plot_fit_parameters(fits, title='Rext dependence of fitted parameters', figure=None):
+    """Two-panel Figure 4.16-style summary: slope and offset versus Rext.
+
+    Each successfully fitted run is shown individually, so duplicate Rext scans
+    remain visible. Uncertainties are ordinary OLS standard errors from the
+    residual covariance, not full systematic measurement uncertainties.
+    Failed fits are omitted from the points and reported by the caller.
+    """
+    from matplotlib.figure import Figure
+    if figure is None:
+        figure = Figure(figsize=(8.5, 7), layout='constrained')
+    else:
+        figure.clear()
+    axes = figure.subplots(2, 1, sharex=True)
+    valid = [entry for entry in fits if entry.get('status') == 'ok'
+             and all(math.isfinite(float(entry.get(key, float('nan'))))
+                     for key in ('rext_ohm', 'slope_ohm', 'offset_v'))]
+    for ax, value, uncertainty, ylabel in [
+            (axes[0], 'slope_ohm', 'slope_error_ohm', r'$R_{\\mathrm{slope}}$ (Ω)'),
+            (axes[1], 'offset_v', 'offset_error_v', r'$V_{\\mathrm{ofs}}$ (V)')]:
+        values = sorted(valid, key=lambda entry: (entry['rext_ohm'], entry.get('run', '')))
+        if values:
+            x = np.asarray([entry['rext_ohm'] for entry in values], dtype=float)
+            y = np.asarray([entry[value] for entry in values], dtype=float)
+            sigma = np.asarray([entry.get(uncertainty, float('nan')) for entry in values],
+                               dtype=float)
+            sigma = np.where(np.isfinite(sigma) & (sigma >= 0), sigma, 0.0)
+            ax.errorbar(x, y, yerr=sigma, fmt='o', markersize=5,
+                        color='#1f77b4' if value == 'slope_ohm' else '#d62728',
+                        capsize=3, linewidth=1.2, linestyle='none')
+        else:
+            ax.text(0.5, 0.5, 'No successful linear fits',
+                    transform=ax.transAxes, ha='center', va='center')
+        ax.set_ylabel(ylabel)
+        ax.grid(alpha=0.3)
+    axes[1].set_xlabel(r'$R_{\\mathrm{ext}}$ (Ω)')
+    axes[0].set_title(title)
+    return figure
+
+
+def save_comparison(figure, fits, destination, runs=None, settings=None,
+                    fit_figure=None):
     """Write publication PNG/PDF and fit CSV, never modify source runs."""
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     for extension in ('png', 'pdf'):
         figure.savefig(destination / f'rext_comparison.{extension}',
                        dpi=300, bbox_inches='tight')
+    if fit_figure is None and fits:
+        fit_figure = plot_fit_parameters(fits)
+    if fit_figure is not None:
+        for extension in ('png', 'pdf'):
+            fit_figure.savefig(destination / f'rext_fit_parameters.{extension}',
+                               dpi=300, bbox_inches='tight')
     if runs is not None:
         manifest = {
             'analysis': 'rext_current_sweep_overlay',
@@ -253,7 +303,8 @@ def save_comparison(figure, fits, destination, runs=None, settings=None):
             json.dumps(manifest, indent=2, ensure_ascii=False) + '\n',
             encoding='utf-8')
     if fits:
-        keys = ['rext_ohm','run','status','slope_ohm','offset_v','r2','rmse_v','points']
+        keys = ['rext_ohm','run','status','slope_ohm','slope_error_ohm',
+                'offset_v','offset_error_v','r2','rmse_v','points']
         with (destination / 'rext_fit_results.csv').open('w', newline='') as handle:
             writer = csv.DictWriter(handle, fieldnames=keys)
             writer.writeheader()
