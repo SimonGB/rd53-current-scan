@@ -169,6 +169,20 @@ class RextCompareTests(unittest.TestCase):
         self.assertGreater(fit['slope_error_ohm'],0)
         self.assertGreater(fit['offset_error_v'],0)
 
+    def test_plot_axis_maximum_does_not_change_fit_parameters(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_run(root,'001',750,slope=1.25)
+            runs = discover(root)
+            _, full = compare(runs,'Vin',fit=True,fit_min_ma=10,fit_max_ma=90,
+                              max_plot_ma=100)
+            _, clipped = compare(runs,'Vin',fit=True,fit_min_ma=10,fit_max_ma=90,
+                                 max_plot_ma=30)
+            self.assertEqual(full[0]['status'],'ok')
+            self.assertEqual(clipped[0]['status'],'ok')
+            self.assertAlmostEqual(full[0]['slope_ohm'],clipped[0]['slope_ohm'])
+            self.assertAlmostEqual(full[0]['offset_v'],clipped[0]['offset_v'])
+
 
 if __name__=='__main__':
     unittest.main()
