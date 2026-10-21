@@ -117,6 +117,10 @@ class Window(QMainWindow):
         header.addWidget(title);header.addStretch();
         self.history_windows=[]
         open_run=QPushButton('Open old measurements…');open_run.clicked.connect(self.open_history);header.addWidget(open_run)
+        compare_rext=QPushButton('Compare Rext sweeps…')
+        compare_rext.setToolTip('Overlay input-current sweeps for different external resistors from saved runs.')
+        compare_rext.clicked.connect(self.open_rext_compare)
+        header.addWidget(compare_rext)
         self.state=QLabel('READY');header.addWidget(self.state);layout.addLayout(header)
         sub=QLabel('Map your wiring • capture fluctuations • compare boards');sub.setStyleSheet('color:#91a6bb');layout.addWidget(sub)
         splitter=QSplitter();layout.addWidget(splitter,1)
@@ -780,6 +784,22 @@ class Window(QMainWindow):
             QMessageBox.information(self, 'Plots saved', f'PNG and PDF plots saved to:\n{output}')
         except Exception as exc:
             QMessageBox.warning(self, 'Cannot save plots', str(exc))
+
+    def open_rext_compare(self):
+        """Open a read-only Rext comparison for this board's saved scans."""
+        from rext_compare_gui import RextCompareWindow
+        root = Path('results') / self.name.text().strip()
+        if not root.is_dir():
+            root = Path('results')
+        try:
+            viewer = RextCompareWindow(root, self)
+            self.history_windows.append(viewer)
+            viewer.finished.connect(
+                lambda _code, v=viewer:
+                self.history_windows.remove(v) if v in self.history_windows else None)
+            viewer.show()
+        except Exception as exc:
+            QMessageBox.warning(self, 'Could not open Rext comparison', str(exc))
 
     def open_history(self):
         path,_=QFileDialog.getOpenFileName(self,'Open saved run','results','Run data (metadata.json measurements.csv);;JSON/CSV (*.json *.csv)')
