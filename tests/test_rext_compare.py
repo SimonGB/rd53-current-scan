@@ -145,6 +145,16 @@ class RextCompareTests(unittest.TestCase):
             finally:
                 window.close()
 
+    def test_parameter_figure_renders_mathtext_labels(self):
+        """Regression for malformed double-backslash \\mathrm axis labels."""
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        fits = [dict(rext_ohm=750, run='test', status='ok',
+                     slope_ohm=10.0, slope_error_ohm=.2,
+                     offset_v=1.5, offset_error_v=.03)]
+        figure = plot_fit_parameters(fits)
+        FigureCanvasAgg(figure).draw()
+        self.assertIn('slope', figure.axes[0].get_ylabel())
+
     def test_parameter_figure_skips_failed_fits_and_keeps_repeated_rext(self):
         entries = [
             dict(rext_ohm=600, run='first', status='ok', slope_ohm=1.2,
