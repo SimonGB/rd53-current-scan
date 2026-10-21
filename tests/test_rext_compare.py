@@ -9,7 +9,7 @@ from unittest.mock import patch
 import numpy as np
 
 from rext_compare import (
-    parse_configuration, discover, families, signal_choices, trace,
+    parse_configuration, parse_variable, discover, families, signal_choices, trace,
     fit_trace, compare, plot_fit_parameters, save_comparison,
 )
 
@@ -192,6 +192,83 @@ class RextCompareTests(unittest.TestCase):
             self.assertEqual(clipped[0]['status'],'ok')
             self.assertAlmostEqual(full[0]['slope_ohm'],clipped[0]['slope_ohm'])
             self.assertAlmostEqual(full[0]['offset_v'],clipped[0]['offset_v'])
+
+    def test_offset_voltage_parser_and_fixed_rext_grouping(self):
+        first = 'board #1 in SLDO mode - Rref = 150kOhm, Rext = 750 Ohm, Voffset = 0.5 V'
+        second = 'board #1 in SLDO mode - Rref = 150kOhm, Rext = 750 Ohm, Voffset = 750 mV'
+        different_rext = 'board #1 in SLDO mode - Rref = 150kOhm, Rext = 900 Ohm, Voffset = 0.5 V'
+        result1 = parse_variable(first, 'offset')
+        result2 = parse_variable(second, 'offset')
+        self.assertAlmostEqual(result1[0], .5)
+        self.assertAlmostEqual(result2[0], .75)
+        self.assertEqual(result1[1], result2[1])
+        self.assertNotEqual(result1[1], parse_variable(different_rext,'offset')[1])
+        self.assertEqual(parse_variable('Voffset = -0.15 V','offset')[0], -.15)
+        self.assertIsNone(parse_variable('Rext = 750 Ohm','offset'))
+
+    def test_offset_voltage_overlay_and_parameter_graph(self):
+        from rext_compare import plot_fit_parameters
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for index, offset in enumerate((0.4, .6, .8)):
+                folder = make_run(root, str(index), 750, slope=1.0+offset)
+                meta = folder / 'metadata.json'
+                data = json.loads(meta.read_text())
+                data['settings']['plot_configuration'] += f', Voffset = {offset:g} V'
+                meta.write_text(json.dumps(data))
+            other = make_run(root, 'other_rext', 900, slope=1.8)
+            meta = other / 'metadata.json'
+            data = json.loads(meta.read_text())
+            data['settings']['plot_configuration'] += ', Voffset = 0.6 V'
+            meta.write_text(json.dumps(data))
+            scans = discover(root, parameter='offset')
+            self.assertEqual(len(scans),4)
+            groups = families(scans)
+            self.assertEqual(len(groups),2)
+            selected = next(group for group in groups.values() if len(group)==3)
+            fig, fit_results = compare(selected,'Vin',fit=True,
+                                       fit_min_ma=10,fit_max_ma=90)
+            self.assertEqual(len(fig.axes[0].lines),6)
+            self.assertEqual(sorted(r['offset_setting_v'] for r in fit_results),
+                             [.4,.6,.8])
+            summary = plot_fit_parameters(fit_results)
+            self.assertIn('Configured offset voltage', summary.axes[-1].get_xlabel())
+            FigureCanvasAgg(summary).draw()
+            dest=root/'comparison_output'
+            save_comparison(fig,fit_results,dest,selected)
+            self.assertTrue((dest/'offset_setting_comparison.pdf').exists())
+            self.assertTrue((dest/'offset_setting_fit_parameters.pdf').exists())
+            self.assertTrue((dest/'offset_setting_fit_results.csv').exists())
+            self.assertFalse((dest/'rext_comparison.pdf').exists())
+
+    def test_offset_voltage_gui_switches_parameter(self):
+        import os
+        os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from rext_compare_gui import RextCompareWindow
+        except ImportError:
+            self.skipTest('PyQt6 not installed')
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            folder=make_run(root,'001',750)
+            meta=folder/'metadata.json'
+            data=json.loads(meta.read_text())
+            data['settings']['plot_configuration'] += ', Voffset = 0.7 V'
+            meta.write_text(json.dumps(data))
+            window=RextCompareWindow(root)
+            try:
+                self.assertEqual(window.vary.currentData(),'rext')
+                window.vary.setCurrentIndex(window.vary.findData('offset'))
+                self.assertEqual(window.runs.rowCount(),1)
+                self.assertIn('Voffset',window.runs.horizontalHeaderItem(1).text())
+                self.assertIsNotNone(window.last_figure)
+                self.assertIn('Configured offset voltage',
+                              window.parameters_figure.axes[-1].get_xlabel())
+            finally:
+                window.close()
 
 
 if __name__=='__main__':
