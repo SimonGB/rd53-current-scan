@@ -55,7 +55,7 @@ class DG4162Page(QWidget):
         self.resource.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.resource.setMinimumWidth(380)
         form.addRow('VISA resource',self.resource)
-        discover=QPushButton('Find VISA resources')
+        discover=QPushButton('Find USBTMC / VISA resources')
         discover.clicked.connect(self.find_resources)
         identify=QPushButton('Identify')
         identify.clicked.connect(self.identify)
@@ -156,10 +156,10 @@ class DG4162Page(QWidget):
 
     def find_resources(self):
         try:
-            # This is an instrument discovery operation only.
-            import pyvisa
-            with pyvisa.ResourceManager() as manager:
-                resources=manager.list_resources()
+            # Include Linux kernel USBTMC devices even when VISA/libusb
+            # discovery cannot enumerate the connected Rigol.
+            from dg4162_frequency_sweep import discover_resources
+            resources=discover_resources()
             previous=self.resource.currentText()
             self.resource.clear()
             self.resource.addItems(resources)
@@ -167,7 +167,7 @@ class DG4162Page(QWidget):
                 self.resource.setEditText(previous)
             self.log.appendPlainText('VISA resources: '+(', '.join(resources) if resources else 'none found'))
         except Exception as error:
-            QMessageBox.warning(self,'VISA discovery failed',str(error))
+            QMessageBox.warning(self,'Instrument discovery failed',str(error))
 
     def identify(self):
         if self.worker and self.worker.isRunning():
