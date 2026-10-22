@@ -80,7 +80,7 @@ def discover_resources(manager=None):
                 result.extend(manager.list_resources())
             finally:
                 manager.close()
-        except (ImportError, OSError, Exception):
+        except Exception:
             # The Linux usbtmc device exists even if PyVISA or libusb is missing.
             pass
     else:
