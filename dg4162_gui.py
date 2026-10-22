@@ -61,6 +61,8 @@ class DG4162Page(QWidget):
         self.resource.setEditable(True)
         self.resource.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.resource.setMinimumWidth(380)
+        if Path('/dev/usbtmc0').exists():
+            self.resource.addItem('/dev/usbtmc0')
         form.addRow('VISA resource',self.resource)
         discover=QPushButton('Find USBTMC / VISA resources')
         discover.clicked.connect(self.find_resources)
