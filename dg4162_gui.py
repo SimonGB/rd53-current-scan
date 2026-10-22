@@ -8,11 +8,11 @@ import threading
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QGroupBox,QLineEdit,QComboBox,
     QDoubleSpinBox,QSpinBox,QPushButton,QLabel,QCheckBox,QPlainTextEdit,
-    QProgressBar,QMessageBox,
+    QProgressBar,QMessageBox,QScrollArea,QSplitter,
 )
 from dg4162_frequency_sweep import run, validate, frequency_points, make_parser
 
@@ -54,6 +54,21 @@ class DG4162Page(QWidget):
             'ground references before enabling output.')
         warning.setWordWrap(True)
         layout.addWidget(warning)
+        splitter=QSplitter(Qt.Orientation.Horizontal)
+        settings_scroll=QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setMinimumWidth(360)
+        settings_scroll.setMaximumWidth(570)
+        self.settings_panel=QWidget()
+        settings_layout=QVBoxLayout(self.settings_panel)
+        settings_scroll.setWidget(self.settings_panel)
+        splitter.addWidget(settings_scroll)
+        output_panel=QWidget()
+        output_layout=QVBoxLayout(output_panel)
+        splitter.addWidget(output_panel)
+        splitter.setStretchFactor(0,0)
+        splitter.setStretchFactor(1,1)
+        layout.addWidget(splitter,1)
 
         card=QGroupBox('Generator & waveform')
         form=QFormLayout(card)
@@ -103,7 +118,7 @@ class DG4162Page(QWidget):
         self.spacing=QComboBox()
         self.spacing.addItems(['log','linear'])
         form.addRow('Frequency spacing',self.spacing)
-        layout.addWidget(card)
+        settings_layout.addWidget(card)
 
         options=QGroupBox('Safety and acquisition')
         opts=QFormLayout(options)
@@ -132,7 +147,9 @@ class DG4162Page(QWidget):
         self.capture_rate.setValue(1_000_000)
         opts.addRow('Pico sample rate [S/s]',self.capture_rate)
         self.plot_quantity=QComboBox()
-        self.plot_quantity.addItems(['Mean voltage','Peak-to-peak voltage','Standard deviation'])
+        self.plot_quantity.addItems([
+            'Mean voltage','Peak-to-peak voltage','Standard deviation',
+            'VIN→VOUT attenuation [dB]','VOUT relative phase [deg]'])
         self.plot_quantity.currentIndexChanged.connect(self.redraw_live)
         opts.addRow('Live plot quantity',self.plot_quantity)
         note=QLabel('Hameg DC current is not changed here. Each frequency gets one '
@@ -140,7 +157,7 @@ class DG4162Page(QWidget):
                     'the capture can miss most of a cycle.')
         note.setWordWrap(True)
         opts.addRow(note)
-        layout.addWidget(options)
+        settings_layout.addWidget(options)
 
         buttons=QHBoxLayout()
         self.preview=QPushButton('Preview frequencies')
@@ -153,17 +170,18 @@ class DG4162Page(QWidget):
         buttons.addWidget(self.preview)
         buttons.addWidget(self.start)
         buttons.addWidget(self.stop)
-        layout.addLayout(buttons)
+        settings_layout.addLayout(buttons)
         self.progress=QProgressBar()
-        layout.addWidget(self.progress)
+        settings_layout.addWidget(self.progress)
         self.figure=Figure(figsize=(8,4),layout='constrained')
         self.canvas=FigureCanvasQTAgg(self.figure)
         self.canvas.setMinimumHeight(230)
-        layout.addWidget(self.canvas,2)
+        output_layout.addWidget(self.canvas,2)
         self.log=QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumHeight(140)
-        layout.addWidget(self.log,1)
+        settings_layout.addWidget(self.log,1)
+        settings_layout.addStretch()
         self.enable.toggled.connect(self.update_start_text)
 
     def update_start_text(self):
@@ -285,21 +303,33 @@ class DG4162Page(QWidget):
     def redraw_live(self, *unused):
         if not self.live_points:
             return
-        suffix=('_mean_v','_vpp_v','_std_v')[self.plot_quantity.currentIndex()]
-        names=sorted(k for row in self.live_points for k in row if k.endswith(suffix))
+        choice=self.plot_quantity.currentIndex()
+        suffix=('_mean_v','_vpp_v','_std_v','_attenuation_db','_phase_deg')[choice]
+        y_label=('Mean voltage [V]','Peak-to-peak voltage [V]',
+                 'Standard deviation [V]','VIN→VOUT attenuation [dB]',
+                 'VOUT / VIN phase [deg]')[choice]
+        names=sorted({key for row in self.live_points for key in row
+                      if key.endswith(suffix)})
         self.figure.clear()
-        if names:
-            ax=self.figure.subplots()
-            frequencies=[row['readback_hz'] for row in self.live_points]
-            for name in set(names):
-                y=[row.get(name,float('nan')) for row in self.live_points]
-                ax.plot(frequencies,y,marker='o',label=name[:-len(suffix)].replace('_',' / '))
-            if self.spacing.currentText()=='log':
-                ax.set_xscale('log')
-            ax.set(xlabel='Generator frequency [Hz]',ylabel=self.plot_quantity.currentText()+' [V]',
-                   title='Live mapped PicoScope testpoints')
-            ax.grid(alpha=.3)
+        ax=self.figure.subplots()
+        frequencies=[row['readback_hz'] for row in self.live_points]
+        valid=False
+        for name in names:
+            values=[row.get(name,float('nan')) for row in self.live_points]
+            if any(isinstance(v,(int,float)) and math.isfinite(v) for v in values):
+                valid=True
+            ax.plot(frequencies,values,marker='o',label=name[:-len(suffix)].replace('_',' / '))
+        if self.spacing.currentText()=='log':
+            ax.set_xscale('log')
+        ax.set(xlabel='Generator frequency [Hz]',ylabel=y_label,
+               title='Live PicoScope frequency response')
+        if valid:
             ax.legend(fontsize=8)
+        else:
+            ax.text(.5,.5,'No valid samples yet (check VIN and VOUT mappings, '
+                    'capture length and amplitude)',ha='center',va='center',
+                    transform=ax.transAxes,wrap=True)
+        ax.grid(alpha=.3)
         self.canvas.draw_idle()
 
     def on_progress(self,row,total):
@@ -309,10 +339,16 @@ class DG4162Page(QWidget):
         self.progress.setValue(row['index']+1)
         values=[f"{k[:-7]}={v:.4g} V" for k,v in row.items()
                 if k.endswith('_mean_v') and isinstance(v,(int,float))]
+        quality=[f"{key[:-16]}: {value}" for key,value in row.items()
+                 if key.endswith('_transfer_status') and value != 'ok']
+        gain=[f"{key[:-15]} attenuation={value:.2f} dB" for key,value in row.items()
+              if key.endswith('_attenuation_db') and isinstance(value,(int,float))]
         self.log.appendPlainText(
             f"{row['index']+1}/{total}: {row['readback_hz']:.6g} Hz, "
             f"dwell {row['dwell_s']:.3f} s" +
-            (' · ' + ' · '.join(values) if values else ''))
+            (' · ' + ' · '.join(values) if values else '') +
+            (' · ' + ' · '.join(gain) if gain else '') +
+            (' · ' + ' · '.join(quality) if quality else ''))
 
     def on_completed(self,text,success):
         self.log.appendPlainText(('Completed: ' if success else 'Stopped/error: ')+text)
