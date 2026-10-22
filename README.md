@@ -868,3 +868,66 @@ This generates `vofshalf_comparison.pdf/.png`,
 `vofshalf_fit_parameters.pdf/.png`, and `vofshalf_fit_results.csv`
 without changing original measurements. The original fixed-name Rext
 comparisons remain available.
+
+
+## Current-step startup / ramp-history test
+
+`startup_sequence_test.py` is a separate, bounded characterization script
+for checking whether a regulator starts depending on **how input current is
+applied**, not merely on the final programmed current. It reuses the existing
+HMP4040 current-limit driver (including strict setpoint verification) and
+the existing **mapped PicoScope** voltage acquisition.
+
+It supports:
+- `direct`: output OFF, then enable at the specified target (default 25 mA).
+- `staircase`: output OFF, enable at first step, then 5/10/.../80 mA.
+- `both`: separate staircase and direct starts, each preceded by OFF.
+- `recovery`: a staircase followed by a direct start after a full OFF interval.
+
+Choose `--dwell` (seconds spent at each level), `--off-time`
+(seconds between starts), `--repeats` and current amplitudes. Each step
+records the *programmed* current limit, measured input current/voltage,
+mapped Pico testpoint mean voltages, a simple `started` flag based on
+Vout >= `--startup-threshold-v`, and elapsed/command times in
+`startup_steps.csv`. `metadata.json` records the exact settings and
+outcome. `startup_comparison.png/.pdf` shows Vout versus current
+for each sequence/repetition. Threshold classification is a convenience:
+inspect VIN/VOUT/VREF plots and avoid treating a voltage threshold as
+proof of stable internal regulation.
+
+**First test without energizing hardware**:
+
+```bash
+python startup_sequence_test.py --simulate --voltage-limit 2.5 \
+    --max-current-ma 100 --sequence both --direct-ma 25 \
+    --target-ma 80 --step-ma 5 --dwell 1 --off-time 3 --repeats 3
+```
+
+**Hardware after verifying absolute board-safe limits, local ground references,
+bonding, and no other process is controlling the supply**:
+
+```bash
+python startup_sequence_test.py --arm --profile my_wiring.json \
+    --port /dev/hmp4040-1 --channel 2 --voltage-limit 2.5 \
+    --max-current-ma 100 --sequence both --direct-ma 25 \
+    --target-ma 80 --step-ma 5 --dwell 1 --off-time 3 --repeats 3
+```
+
+The example 2.5 V is **illustrative**, not a verified safe regulator limit:
+replace it with a value validated for the exact board and configuration.
+The script rejects currents above your chosen `--max-current-ma`,
+rejects compliance >3.5 V or >2 A maximum current as guardrails,
+and refuses real-hardware operation without both `--arm` and a
+verified `--profile`. It shuts down the selected HMP output on
+normal completion or on errors and writes data after each step.
+**Do not use an oscilloscope channel ground on a floating serial
+powering node.** Standard PicoScope channel BNC grounds are common.
+
+A Hameg command-sequence staircase does **not** directly measure a physical
+current slew rate in mA/µs or a startup delay: USB/serial command timing,
+the HMP current-loop dynamics and the board's capacitance all contribute.
+Use an oscilloscope capture synchronized to an *actual measured current*
+edge for quantitative rise-time/latency analysis; the step script is a
+reproducible screen for startup success/hysteresis.
+
+Tests: `python -m unittest tests.test_startup_sequence -v`.
