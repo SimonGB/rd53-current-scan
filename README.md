@@ -1048,3 +1048,40 @@ resources or previewing the sweep. **It is not yet a physical input-current
 slew-rate measurement or a VIN/VOUT acquisition.** Before using the
 generator output on an RD53 input, review how the 50-ohm source is coupled,
 its voltage/current limits, the Hameg connection and all shared grounds.
+
+
+### Rigol visible as /dev/usbtmc0 but absent from VISA resources
+
+On Linux, the kernel USBTMC driver may expose the connected Rigol as
+`/dev/usbtmc0` even when PyVISA's USB/libusb device enumeration
+is empty (for example because the USB bus node is inaccessible to
+libusb). The generator driver and GUI now support **direct Linux USBTMC
+character-device access**, alongside the existing PyVISA TCPIP/USB
+transport. No VISA library is needed for the direct device path.
+
+```bash
+ls -l /dev/usbtmc*
+python dg4162_frequency_sweep.py --list-resources
+python dg4162_frequency_sweep.py --resource /dev/usbtmc0 --identify
+```
+
+In the main `python gui.py` window choose **DG4162 frequency sweep**
+and press **Find USBTMC / VISA resources**; `/dev/usbtmc0` should appear
+even if PyVISA doesn't list a device. Select it, then press **Identify**.
+The `--identify` command only issues `*IDN?`; it does **not** enable or
+reconfigure the generator output.
+
+If you receive `PermissionError: [Errno 13] Permission denied`, check
+`ls -l /dev/usbtmc0` and `id -nG` to determine whether your login
+user belongs to the node's group. Fix via a persistent udev rule/group
+membership, not `chmod 666` or running the full bench GUI as root.
+Do not have both PyVISA and direct USBTMC clients talking to the same
+generator simultaneously. Unplugging can cause the device node index
+to change.
+
+USB driver visibility alone does not verify the external waveform wiring:
+the generator is a voltage source, not a substitute for the programmable
+Hameg current source. Keep the Rigol output disabled until the physical
+interface, instrument grounds, and injection coupling are checked.
+
+Regression: `python -m unittest tests.test_dg4162_frequency_sweep -v`.
