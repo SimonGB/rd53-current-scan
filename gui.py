@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxL
  QFormLayout,QLabel,QLineEdit,QPushButton,QComboBox,QCheckBox,QSpinBox,QDoubleSpinBox,
  QGroupBox,QTableWidget,QTableWidgetItem,QHeaderView,QSplitter,QTabWidget,QPlainTextEdit,
  QFileDialog,QInputDialog,QMessageBox,QProgressBar,QScrollArea,QSizePolicy,
- QDialog,QDialogButtonBox,QToolButton,QMenu,QListWidget,QListWidgetItem,QAbstractItemView,QStyledItemDelegate,QColorDialog)
+ QDialog,QDialogButtonBox,QToolButton,QMenu,QListWidget,QListWidgetItem,QAbstractItemView,QStyledItemDelegate,QColorDialog,QStackedWidget,QToolBar)
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from mapping import default_profile,validate_profile
@@ -235,6 +235,32 @@ class Window(QMainWindow):
         for box in self.fields.values():box.valueChanged.connect(self.reset_eta)
         self.captures.valueChanged.connect(self.reset_eta);self.reverse.toggled.connect(self.reset_eta);self.sim.toggled.connect(self.reset_eta)
         self.update_eta()
+        # Shared navigation shell: keep the entire established scan/wiring
+        # workspace unchanged while new measurement modes get their own pages.
+        from dg4162_gui import DG4162Page
+        self.measure_pages=QStackedWidget(self)
+        self.measure_pages.addWidget(root)
+        self.dg4162_page=DG4162Page(self)
+        self.measure_pages.addWidget(self.dg4162_page)
+        self.setCentralWidget(self.measure_pages)
+        self.measure_menu=self.menuBar().addMenu('Measurements')
+        self.mode_select=QComboBox()
+        self.mode_select.addItem('Current / voltage sweeps', 'scan')
+        self.mode_select.addItem('DG4162 frequency sweep', 'dg4162')
+        self.mode_toolbar=QToolBar('Measurement mode', self)
+        self.mode_toolbar.setMovable(False)
+        self.mode_toolbar.addWidget(QLabel('Measurement mode: '))
+        self.mode_toolbar.addWidget(self.mode_select)
+        self.addToolBar(self.mode_toolbar)
+        self.mode_select.currentIndexChanged.connect(self.change_measurement_mode)
+        for page_index,title in [(0,'Current / voltage sweeps'),(1,'DG4162 frequency sweep')]:
+            action=self.measure_menu.addAction(title)
+            action.triggered.connect(lambda checked=False, index=page_index:
+                                     self.mode_select.setCurrentIndex(index))
+        self.measure_menu.addSeparator()
+        for label in ('Startup sequences (CLI tool)', 'Load regulation (planned)'):
+            action=self.measure_menu.addAction(label)
+            action.setEnabled(False)
         self.setStyleSheet(self.styleSheet()+'''QMainWindow,QWidget {background:#0c1825;color:#d8e5f2;font-size:12px;}
             QLineEdit,QDoubleSpinBox,QSpinBox,QComboBox,QPlainTextEdit,QTableWidget {background:#172a3c;border:1px solid #30475d;border-radius:5px;padding:4px;}
             QPushButton {background:#22394e;border:1px solid #36546b;border-radius:6px;padding:7px;}
@@ -820,7 +846,24 @@ class Window(QMainWindow):
             draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_limit(self.rows),color_rows=self.rows,configuration=self.plot_configuration.text() if self.show_configuration.isChecked() else "",dark=True,show_difference=self.show_difference.isChecked(),mode_hint=self.plot_axis_mode())
             canvas.setMinimumHeight(260 * len(figure.axes))
             canvas.draw_idle()
+    def change_measurement_mode(self, index):
+        if index == 1 and self.running:
+            QMessageBox.information(self, 'Scan running',
+                                    'Stop the Hameg scan before opening a different measurement mode.')
+            self.mode_select.blockSignals(True)
+            self.mode_select.setCurrentIndex(0)
+            self.mode_select.blockSignals(False)
+            return
+        self.measure_pages.setCurrentIndex(index)
+
     def closeEvent(self,event):
+        if hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
+            self.dg4162_page.stop_run()
+            QMessageBox.information(
+                self, 'DG4162 is stopping',
+                'Closing is deferred until the DG4162 output is disabled.')
+            event.ignore()
+            return
         if getattr(self,'abort_dialog',None):
             self.abort_dialog.raise_();event.ignore();return
         if self.worker and self.worker.isRunning():
