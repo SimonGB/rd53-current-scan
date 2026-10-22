@@ -171,6 +171,61 @@ class DG4162Tests(unittest.TestCase):
             resources=discover_resources(manager=FakeManager(FakeDG()))
         self.assertIn('/dev/usbtmc0',resources)
 
+    def test_mapped_pico_voltages_written_to_frequency_csv(self):
+        from mapping import default_profile
+        import numpy as np
+        class FakePico:
+            def __init__(self):
+                self.connected=False
+                self.closed=False
+                self.captures=0
+            def connect(self):
+                self.connected=True
+            def capture(self):
+                self.captures += 1
+                return {'A': np.array([.85,.9,.95]),
+                        'B': np.array([1.79,1.8,1.81])}
+            def close(self):
+                self.closed=True
+        pico=FakePico()
+        rigol=FakeDG()
+        with tempfile.TemporaryDirectory() as folder:
+            args=make_args('--enable-output','--confirm-safe-interface',
+                '--amplitude-vpp','0.2','--start-hz','10','--stop-hz','100',
+                '--points','3','--output',folder)
+            result=run(args, manager=FakeManager(rigol),
+                       sleeper=lambda duration:None,
+                       profile=default_profile(),reader=pico)
+            import csv
+            with (result/'frequency_steps.csv').open() as handle:
+                rows=list(csv.DictReader(handle))
+            self.assertEqual(pico.captures,3)
+            self.assertTrue(pico.connected)
+            self.assertTrue(pico.closed)
+            self.assertAlmostEqual(float(rows[0]['board1_Vout_mean_v']),1.8)
+            self.assertAlmostEqual(float(rows[0]['board1_Vref_mean_v']),.9)
+            self.assertAlmostEqual(float(rows[0]['board1_Vout_vpp_v']),.02)
+            self.assertEqual(rigol.commands[-1],':OUTP1 OFF')
+
+    def test_pico_capture_failure_disables_rigol_and_closes_pico(self):
+        from mapping import default_profile
+        class BrokenPico:
+            closed=False
+            def connect(self):pass
+            def capture(self):raise RuntimeError('Pico disconnected')
+            def close(self):self.closed=True
+        pico=BrokenPico()
+        rigol=FakeDG()
+        with tempfile.TemporaryDirectory() as folder:
+            args=make_args('--enable-output','--confirm-safe-interface',
+                '--amplitude-vpp','0.2','--start-hz','10','--stop-hz','100',
+                '--points','3','--output',folder)
+            with self.assertRaisesRegex(RuntimeError,'Pico disconnected'):
+                run(args,manager=FakeManager(rigol),sleeper=lambda d:None,
+                    profile=default_profile(),reader=pico)
+            self.assertTrue(pico.closed)
+            self.assertEqual(rigol.commands[-1],':OUTP1 OFF')
+
 
 if __name__=='__main__':
     unittest.main()
