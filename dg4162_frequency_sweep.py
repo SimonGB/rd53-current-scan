@@ -41,8 +41,8 @@ class LinuxUSBTMC:
         self.path = str(path)
         self.handle = None
         self.timeout = None
-        self.write_termination = '\\n'
-        self.read_termination = '\\n'
+        self.write_termination = '\n'
+        self.read_termination = '\n'
 
     def open(self):
         self.handle = os.open(self.path, os.O_RDWR | getattr(os, 'O_CLOEXEC', 0))
@@ -51,7 +51,7 @@ class LinuxUSBTMC:
     def write(self, command):
         if self.handle is None:
             raise RuntimeError('USBTMC device not open')
-        payload = (command.rstrip('\\n') + '\\n').encode('ascii')
+        payload = (command.rstrip('\n') + '\n').encode('ascii')
         written = os.write(self.handle, payload)
         if written != len(payload):
             raise OSError(f'Short USBTMC write: {written}/{len(payload)} bytes')
