@@ -54,14 +54,18 @@ def voltage_transfer(vin,vout,sample_interval_s,frequency_hz,min_input_vpk=.001)
     outgoing=fundamental(vout,sample_interval_s,frequency_hz)
     if not (np.isfinite(min_input_vpk) and min_input_vpk>0):
         raise ValueError('Minimum input amplitude must be positive and finite')
-    threshold=max(min_input_vpk,3*incoming['residual_rms_v'])
+    # A square-wave drive contains substantial *real harmonics*. Those
+    # harmonics appear in the one-frequency fit residual and must not be
+    # misclassified as broadband noise. Use a conservative absolute
+    # fundamental-amplitude floor; show the fit residual separately.
+    threshold=min_input_vpk
     if incoming['amplitude_vpk']<=threshold:
         raise ValueError(
             f'Vin fundamental {incoming["amplitude_vpk"]:.4g} Vpk is '
             f'below signal/noise threshold {threshold:.4g} Vpk')
     # Very small, noise-like Vout cannot yield a reliable phase.
-    if outgoing['amplitude_vpk']<=max(1e-6,3*outgoing['residual_rms_v']):
-        raise ValueError('Vout fundamental is below its noise threshold; phase is undefined')
+    if outgoing['amplitude_vpk']<=1e-5:
+        raise ValueError('Vout fundamental is below 10 µVpk; phase is undefined')
     transfer=outgoing['phasor']/incoming['phasor']
     gain_db=float(20*np.log10(abs(transfer)))
     phase=float(np.degrees(np.angle(transfer)))
