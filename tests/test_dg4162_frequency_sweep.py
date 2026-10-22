@@ -143,6 +143,20 @@ class DG4162Tests(unittest.TestCase):
             opened.assert_called_once()
             closed.assert_called_once_with(descriptor)
 
+    def test_direct_usbtmc_read_timeout_gives_actionable_error(self):
+        from unittest.mock import patch
+        from dg4162_frequency_sweep import DG4162
+        with patch('dg4162_frequency_sweep.os.open',return_value=73), \
+             patch('dg4162_frequency_sweep.os.write',return_value=6), \
+             patch('dg4162_frequency_sweep.os.read',side_effect=TimeoutError(110,'Connection timed out')), \
+             patch('dg4162_frequency_sweep.os.close'):
+            device=DG4162('/dev/usbtmc0')
+            try:
+                with self.assertRaisesRegex(TimeoutError,'USB Dev = PC'):
+                    device.connect()
+            finally:
+                device.close()
+
     def test_kernel_resource_list_includes_usbtmc0(self):
         from unittest.mock import patch
         from pathlib import Path
