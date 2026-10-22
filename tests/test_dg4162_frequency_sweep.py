@@ -120,6 +120,38 @@ class DG4162Tests(unittest.TestCase):
             self.assertEqual(dev.commands[-1],':OUTP1 OFF')
             self.assertTrue(dev.closed)
 
+    def test_direct_linux_usbtmc_identification_without_visa(self):
+        from unittest.mock import patch
+        from dg4162_frequency_sweep import DG4162
+        import os
+        commands=[]
+        descriptor=73
+        def fake_write(fd, payload):
+            self.assertEqual(fd,descriptor)
+            commands.append(payload)
+            return len(payload)
+        with patch('dg4162_frequency_sweep.os.open',return_value=descriptor) as opened, \
+             patch('dg4162_frequency_sweep.os.write',side_effect=fake_write), \
+             patch('dg4162_frequency_sweep.os.read',
+                   return_value=b'RIGOL TECHNOLOGIES,DG4162,123456,00.01\\n'), \
+             patch('dg4162_frequency_sweep.os.close') as closed:
+            device=DG4162('/dev/usbtmc0')
+            identity=device.connect()
+            self.assertIn('DG4162',identity)
+            self.assertEqual(commands,[b'*IDN?\\n'])
+            device.close()
+            opened.assert_called_once()
+            closed.assert_called_once_with(descriptor)
+
+    def test_kernel_resource_list_includes_usbtmc0(self):
+        from unittest.mock import patch
+        from pathlib import Path
+        from dg4162_frequency_sweep import discover_resources
+        with patch('dg4162_frequency_sweep.Path.glob',
+                   return_value=[Path('/dev/usbtmc0')]):
+            resources=discover_resources(manager=FakeManager(FakeDG()))
+        self.assertIn('/dev/usbtmc0',resources)
+
 
 if __name__=='__main__':
     unittest.main()
