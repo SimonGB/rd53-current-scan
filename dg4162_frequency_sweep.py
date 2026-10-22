@@ -58,9 +58,19 @@ class LinuxUSBTMC:
 
     def query(self, command):
         self.write(command)
-        response = os.read(self.handle, 4096).decode('ascii',errors='replace').strip()
+        try:
+            payload = os.read(self.handle, 4096)
+        except TimeoutError as error:
+            raise TimeoutError(
+                f'Linux USBTMC device {self.path} did not answer {command!r}. '
+                'Check DG4162 rear USB DEVICE cable and '
+                'Utility > I/O Setup > USB Dev = PC; disconnect other '
+                'programs that may own the instrument. '
+                'This is a USBTMC query timeout, not a frequency-sweep error.'
+            ) from error
+        response = payload.decode('ascii',errors='replace').strip()
         if not response:
-            raise RuntimeError(f'Empty USBTMC response to {command}')
+            raise RuntimeError(f'Empty USBTMC response to {command!r} from {self.path}')
         return response
 
     def close(self):
