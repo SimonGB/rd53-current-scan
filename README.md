@@ -1132,3 +1132,53 @@ After updating, use `--identify` first, with generator output
 disabled, to confirm the instrument responds. Persistent timeouts after
 this correction warrant checking USB Device = PC, exclusive device
 access, USB cable, and alternate LAN/VISA control.
+
+
+## Shared Setup / Measurements / Results workflow
+
+The main `python gui.py` window now has three persistent top-level tabs:
+
+1. **Setup boards & testpoints**: the existing board-card layout,
+   testpoint editor, photo placement, Pico/Venelin input mappings,
+   connection annotations and profile save/load tools.
+2. **Measurements**: choose either the original Hameg
+   current/voltage scan or the **DG4162 frequency sweep + PicoScope**.
+   This mode choice does not hide or replace the shared board mappings.
+3. **Results & plots**: existing Hameg up/down sweep figures and run log;
+   old-run viewing and parameter comparison remain in the Analysis menu.
+
+For the new Rigol/Pico measurement:
+- Select **Pico** as the measurement backend in Setup and assign each
+  physical Pico input channel to a board testpoint (Vin/Vout/Vref).
+  PicoScope channel BNC grounds are common; do NOT reference different
+  floating serial-power domains using grounded probes.
+- In **Measurements → DG4162 frequency sweep**, select `/dev/usbtmc0`,
+  waveform/frequency/amplitude/dwell and keep **Capture PicoScope voltages
+  using shared Setup mappings** checked. Choose an appropriate
+  capture window and sample rate.
+- After safe interface verification, enable the generator and start the
+  sweep. A PicoScope capture is taken at every frequency step. The live
+  plot can show **mean**, **peak-to-peak**, or **standard deviation** of
+  each mapped waveform, updated after every frequency point.
+- `frequency_steps.csv` includes `<board>_<testpoint>_mean_v`,
+  `_std_v` and `_vpp_v` for each mapped input. The JSON sidecar saves
+  the exact mapping and generator settings, making the measurement
+  reproducible. The Hameg supply is **not** modified in this mode.
+
+**Important measurement limitation:** One finite Pico block per frequency
+step is not a transfer-function or lock-in measurement. A 20 ms waveform
+window at 1 Hz sees only 2% of one cycle; peak-to-peak values can
+substantially underestimate modulation. Select a window encompassing
+several signal cycles, respecting the two-million-sample-per-channel
+limit, and/or restrict early checks to frequencies where the window
+covers full periods. This initial readout does not compute gain, phase,
+startup probability or physical current ripple amplitude. Frequency
+response against the actual input-current modulation requires a
+simultaneously measured current-sense waveform and phase-aware fitting.
+
+Run:
+```bash
+git pull
+python gui.py
+python -m unittest tests.test_dg4162_frequency_sweep tests.test_measurement_modes -v
+```
