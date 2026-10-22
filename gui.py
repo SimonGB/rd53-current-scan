@@ -112,7 +112,7 @@ class Window(QMainWindow):
         super().__init__();self.setWindowTitle('RD53 · Powering Test Station')
         screen=QApplication.primaryScreen().availableGeometry();self.resize(min(1380,int(screen.width()*.95)),min(920,int(screen.height()*.92)))
         self.profile=default_profile();self.worker=None;self.rows=[];self.running=False;self.clock=None;self.estimate_state='preview'
-        root=QWidget();self.setCentralWidget(root);layout=QVBoxLayout(root)
+        root=QWidget();layout=QVBoxLayout(root)
         header=QHBoxLayout();title=QLabel('RD53  /  Powering Test Station');title.setStyleSheet('font-size:24px;font-weight:700;color:#e2f0ff')
         header.addWidget(title);header.addStretch();
         self.history_windows=[]
@@ -847,6 +847,13 @@ class Window(QMainWindow):
             canvas.setMinimumHeight(260 * len(figure.axes))
             canvas.draw_idle()
     def change_measurement_mode(self, index):
+        if index == 0 and hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
+            QMessageBox.information(self, 'Generator sweep running',
+                                    'Stop the DG4162 sweep and let the output disable before changing modes.')
+            self.mode_select.blockSignals(True)
+            self.mode_select.setCurrentIndex(1)
+            self.mode_select.blockSignals(False)
+            return
         if index == 1 and self.running:
             QMessageBox.information(self, 'Scan running',
                                     'Stop the Hameg scan before opening a different measurement mode.')
