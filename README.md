@@ -1002,3 +1002,49 @@ frequency is not equivalent to Hameg current slew rate.
 
 Hardware-free tests:
 `python -m unittest tests.test_dg4162_frequency_sweep -v`.
+
+
+### RD53 station GUI measurement modes
+
+The main `python gui.py` window now includes a persistent
+**Measurement mode** selector and **Measurements / Analysis** menu.
+
+- **Current / voltage sweeps** retains the existing mapped-board editor,
+  Hameg/Pico/Venelin measurements, voltage/current modes, run comments,
+  live plots and saved settings.
+- **DG4162 frequency sweep** opens a dedicated, generator-only control
+  panel with VISA resource discovery, ID verification, channel selection,
+  waveform, frequency range, log/linear spacing, calibrated voltage
+  amplitude, DC offset, step duration and output/result controls.
+  It is explicitly marked as **generator-only** until synchronized
+  PicoScope/DUT response acquisition is implemented.
+- The **Analysis** menu exposes **Open old measurements…** and
+  **Compare sweeps…** from either mode.
+- **Startup sequences** remain available as a separate CLI tool, while
+  **Load regulation** is shown as a planned future mode, not as an
+  implemented acquisition.
+
+The generator starts disabled by default. To energize it, the user must
+check **Enable DG4162 output**, separately confirm the physical/electrical
+interface, and accept the final confirmation dialog. An active Hameg scan
+blocks navigation into the Rigol mode; an active Rigol frequency sweep
+blocks navigation back into the Hameg mode. The Rigol Stop button sets
+an interrupt event; the worker sends output OFF in its cleanup before
+ending. Closing the main window during a Rigol run requests a stop and
+defers closing until the run is finished.
+
+The CLI `--list-resources` output was also fixed: VISA resource names are
+strings, not frequency/dwell tuples. Use:
+
+```bash
+python -m pip install pyvisa pyvisa-py
+python dg4162_frequency_sweep.py --list-resources
+python gui.py
+python -m unittest tests.test_dg4162_frequency_sweep tests.test_measurement_modes -v
+```
+
+The frequency sweep does not energize any output just by discovering
+resources or previewing the sweep. **It is not yet a physical input-current
+slew-rate measurement or a VIN/VOUT acquisition.** Before using the
+generator output on an RD53 input, review how the 50-ohm source is coupled,
+its voltage/current limits, the Hameg connection and all shared grounds.
