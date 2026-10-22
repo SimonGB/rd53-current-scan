@@ -221,9 +221,16 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep):
 def main():
     args=make_parser().parse_args()
     outcome=run(args)
-    if isinstance(outcome,list):
-        for f,dwell in outcome:
-            print(f'{f:.6g} Hz: dwell {dwell:.3f} s')
+    if args.list_resources:
+        if outcome:
+            print('VISA resources:')
+            for resource in outcome:
+                print(' ', resource)
+        else:
+            print('No VISA resources found.')
+    elif args.simulate:
+        for frequency, dwell in outcome:
+            print(f'{frequency:.6g} Hz: dwell {dwell:.3f} s')
     else:
         print(outcome)
 
