@@ -58,6 +58,8 @@ def validate_args(args, profile):
         raise ValueError('--arm and --simulate are mutually exclusive')
     if not args.simulate and not args.arm:
         raise ValueError('Hardware is disabled: specify --arm after checking your circuit limits, or --simulate')
+    if args.arm and args.profile is None:
+        raise ValueError('A verified wiring --profile is required for real hardware')
     if profile['backend'] != 'pico':
         raise ValueError('Initial startup-step test supports mapped PicoScope input channels only')
     if not any('out' in item['testpoint'].lower() for item in profile['mappings']):
@@ -141,7 +143,7 @@ def perform(args, profile, supply=None, reader=None, sleep=time.sleep):
     fields=['trial','sequence','step','command_time_utc','elapsed_s',
             'command_duration_s','requested_ma','measured_ma',
             'supply_voltage_v','started','threshold_v']
-    fields += [f"voltage_{m['testpoint']}_v" for m in profile['mappings']]
+    fields += [f"voltage_{m['board']}_{m['testpoint']}_v" for m in profile['mappings']]
     try:
         reader.connect()
         if hasattr(reader,'preflight'):
@@ -191,7 +193,9 @@ def perform(args, profile, supply=None, reader=None, sleep=time.sleep):
                                    measured_ma=measured_a*1000,
                                    supply_voltage_v=measured_v,
                                    started=is_on,threshold_v=args.startup_threshold_v)
-                        row.update({f'voltage_{name}_v':voltage for name,voltage in readings.items()})
+                        for mapping in profile['mappings']:
+                            name=mapping['testpoint']
+                            row[f"voltage_{mapping['board']}_{name}_v"] = readings[name]
                         writer.writerow(row)
                         handle.flush()
                         rows.append(row)
@@ -221,7 +225,11 @@ def perform(args, profile, supply=None, reader=None, sleep=time.sleep):
             metadata['supply_close_error']=str(exc)
         (out/'metadata.json').write_text(json.dumps(metadata,indent=2),encoding='utf-8')
         if rows:
-            plot_results(rows, profile, out)
+            try:
+                plot_results(rows, profile, out)
+            except BaseException as exc:
+                metadata['plot_error'] = str(exc)
+                (out/'metadata.json').write_text(json.dumps(metadata,indent=2),encoding='utf-8')
     if error:
         raise error
     return out
@@ -238,7 +246,7 @@ def plot_results(rows, profile, out):
     FigureCanvasAgg(fig)
     ax=fig.subplots()
     for (repetition,label), grouped in trials.items():
-        vout_name=next((f"voltage_{m['testpoint']}_v"
+        vout_name=next((f"voltage_{m['board']}_{m['testpoint']}_v"
                         for m in profile['mappings'] if 'out' in m['testpoint'].lower()),None)
         ax.plot([r['requested_ma'] for r in grouped],
                 [r[vout_name] for r in grouped],
