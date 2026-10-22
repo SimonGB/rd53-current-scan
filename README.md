@@ -931,3 +931,74 @@ edge for quantitative rise-time/latency analysis; the step script is a
 reproducible screen for startup success/hysteresis.
 
 Tests: `python -m unittest tests.test_startup_sequence -v`.
+
+
+## Rigol DG4162 frequency-step sweep (voltage modulation)
+
+`dg4162_frequency_sweep.py` communicates with the DG4162 over USB/LAN
+using PyVISA. Install the additional optional dependencies in your venv:
+`python -m pip install pyvisa pyvisa-py`. For Linux USB-TMC, the
+platform may require USB permissions/udev rules or the official VISA
+driver. On the Rigol front panel select **Utility → I/O Setup → USB Dev → PC**
+for USB remote control.
+
+**Electrical warning:** DG4162 is a voltage-output generator with a nominal
+50-ohm physical output impedance, NOT an isolated programmable current
+source. A directly connected Shunt-LDO current-power input is **not**
+necessarily a safe or meaningful drive point. Never put the Rigol output
+directly in parallel with an energized Hameg output; verify the intended
+injection network, common grounds, DC offsets, compliance, and which test
+point is being modulated. The DG4162's High-Z load configuration changes
+amplitude calibration, not the actual 50-ohm output resistance.
+
+Start by discovering the instrument without enabling any output:
+
+```bash
+python dg4162_frequency_sweep.py --list-resources
+python dg4162_frequency_sweep.py --resource 'USB0::0x1AB1::0x04B0::YOUR_SERIAL::INSTR' --identify
+```
+
+Preview a logarithmic square-wave sweep from 1 Hz to 10 kHz with no
+instrument communication:
+
+```bash
+python dg4162_frequency_sweep.py --simulate --start-hz 1 --stop-hz 10000 \
+  --points 25 --wave square --cycles 20
+```
+
+With a VISA resource but no enable flags, the script merely confirms the
+identity and returns the planned frequencies; **it does not change the
+function generator's settings**. To actually emit a waveform, you must
+provide `--enable-output --confirm-safe-interface --amplitude-vpp VALUE`
+and a VISA `--resource`. Those options represent user confirmation that
+the electrical interface has been checked, **not** an automatic electrical
+safety guarantee. The script uses the chosen channel, turns it OFF first,
+configures square or sine waveform and its High-Z-calibrated voltage
+amplitude/offset, then steps frequency and verifies readback. The output
+is disabled in `finally` after completion or failure. Allowed programmatic
+waveform excursions are limited to ±2 V by an additional *software
+guardrail*, which does **not** establish a safe voltage/current for any
+particular test board or back-driven instrument.
+
+A properly reviewed connection might use:
+
+```bash
+python dg4162_frequency_sweep.py --resource 'YOUR_VISA_RESOURCE' \
+  --enable-output --confirm-safe-interface --channel 1 \
+  --wave square --amplitude-vpp 0.2 --offset-v 0 \
+  --start-hz 1 --stop-hz 10000 --points 25 --spacing log \
+  --cycles 20 --min-dwell-s 0.2 --max-dwell-s 30
+```
+
+At each frequency it holds for at least `--cycles/frequency` seconds,
+bounded by the configured min/max dwell and prints the frequency and hold
+time. The timestamped `frequency_steps.csv` and `metadata.json` currently
+record **generator programming/readback only**, NOT DUT voltages or
+startup probability. To assess startup versus frequency, separately
+measure actual current waveform, VIN, VOUT and VREF synchronized with
+the waveform or integrate the PicoScope mapping after reviewing the
+physical connection. The signal generator's programmed square-wave
+frequency is not equivalent to Hameg current slew rate.
+
+Hardware-free tests:
+`python -m unittest tests.test_dg4162_frequency_sweep -v`.
