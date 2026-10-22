@@ -62,6 +62,9 @@ def validate_args(args, profile):
         raise ValueError('A verified wiring --profile is required for real hardware')
     if profile['backend'] != 'pico':
         raise ValueError('Initial startup-step test supports mapped PicoScope input channels only')
+    mapped_boards = {m['board'] for m in profile['mappings']}
+    if len(mapped_boards) != 1:
+        raise ValueError('Startup characterization requires mappings for exactly one board')
     if not any('out' in item['testpoint'].lower() for item in profile['mappings']):
         raise ValueError('Map Vout to a PicoScope input to classify startup')
     values = [args.voltage_limit, args.max_current_ma, args.direct_ma,
@@ -248,10 +251,10 @@ def plot_results(rows, profile, out):
     for (repetition,label), grouped in trials.items():
         vout_name=next((f"voltage_{m['board']}_{m['testpoint']}_v"
                         for m in profile['mappings'] if 'out' in m['testpoint'].lower()),None)
-        ax.plot([r['requested_ma'] for r in grouped],
+        ax.plot([r['measured_ma'] for r in grouped],
                 [r[vout_name] for r in grouped],
                 marker='o',label=f'{label} repeat {repetition}')
-    ax.set(xlabel='HMP programmed current limit (mA)',
+    ax.set(xlabel='HMP measured input current (mA)',
            ylabel='Vout (V)',title='Shunt-LDO startup: step history comparison')
     ax.grid(alpha=.3);ax.legend()
     fig.savefig(out/'startup_comparison.png',dpi=200)
