@@ -257,13 +257,17 @@ class Window(QMainWindow):
             if item.widget() is not None:
                 setup_layout.addWidget(item.widget())
             elif item.layout() is not None:
-                setup_layout.addLayout(item.layout())
+                moved_layout=item.layout()
+                moved_layout.setParent(None)
+                setup_layout.addLayout(moved_layout)
         for index in range(2):
             item=rl.takeAt(0)
             if item.widget() is not None:
                 result_layout.addWidget(item.widget())
             elif item.layout() is not None:
-                result_layout.addLayout(item.layout())
+                moved_layout=item.layout()
+                moved_layout.setParent(None)
+                result_layout.addLayout(moved_layout)
         side.setParent(None)
         self.measure_pages=QStackedWidget(self.measure_page)
         scan_page=QWidget()
