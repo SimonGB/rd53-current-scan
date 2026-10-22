@@ -226,14 +226,31 @@ def validate(args):
 
 
 def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
-        stop_event=None, on_step=None):
+        stop_event=None, on_step=None, profile=None, reader=None):
+    """Run stepped generator sweep, optionally capturing mapped Pico voltages.
+
+    Passing profile enables synchronous measurements at each frequency.
+    A caller-injected reader permits hardware-free integration tests.
+    The Hameg DC supply is NOT modified by this function.
+    """
     validate(args)
     if args.list_resources:
         return discover_resources(manager)
     if args.simulate:
         return [(f,max(args.min_dwell_s,min(args.max_dwell_s,args.cycles/f)))
                 for f in frequency_points(args.start_hz,args.stop_hz,args.points,args.spacing)]
+    if profile is not None:
+        from mapping import validate_profile
+        profile=validate_profile(profile)
+        if profile['backend']!='pico':
+            raise ValueError('DG4162 response acquisition requires PicoScope mappings')
+        from station import MappedPico
+        if reader is None:
+            options=argparse.Namespace(resolution=12, sample_rate=1e6,
+                                       capture_time=.02)
+            reader=MappedPico(options,profile['mappings'])
     device=DG4162(args.resource,args.channel,manager)
+    reader_connected=False
     connected=False
     active=False
     try:
@@ -247,7 +264,11 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
             return dict(identity=identity,preview=frequencies,
                         message='No output emitted; add --enable-output and --confirm-safe-interface')
         metadata=dict(identity=identity,settings={k:str(v) if isinstance(v,Path) else v
-                       for k,v in vars(args).items()})
+                       for k,v in vars(args).items()},
+                       profile=profile, measurement=('pico_voltage' if profile else 'generator_only'))
+        if reader is not None:
+            reader.connect()
+            reader_connected=True
         args.output.mkdir(parents=True,exist_ok=True)
         path=args.output/('dg4162_'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S_%fZ'))
         path.mkdir(exist_ok=False)
@@ -256,8 +277,12 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
         device.configure(args.wave,args.amplitude_vpp,args.offset_v,frequencies[0])
         start=clock()
         with (path/'frequency_steps.csv').open('w',newline='') as output:
-            writer=csv.DictWriter(output,fieldnames=['index','requested_hz',
-                       'readback_hz','dwell_s','elapsed_s','time_utc'])
+            fieldnames=['index','requested_hz','readback_hz','dwell_s','elapsed_s','time_utc']
+            if profile is not None:
+                for mapping in profile['mappings']:
+                    prefix=f"{mapping['board']}_{mapping['testpoint']}"
+                    fieldnames += [f'{prefix}_mean_v',f'{prefix}_std_v',f'{prefix}_vpp_v']
+            writer=csv.DictWriter(output,fieldnames=fieldnames)
             writer.writeheader()
             # Mark activation attempt first: if the USB write raises after
             # enabling the physical output, finally still sends OFF.
@@ -278,6 +303,16 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
                 row=dict(index=index,requested_hz=frequency,readback_hz=actual,
                          dwell_s=dwell,elapsed_s=clock()-start,
                          time_utc=datetime.now(timezone.utc).isoformat())
+                if profile is not None:
+                    measured_waveforms=reader.capture()
+                    for mapping in profile['mappings']:
+                        wave=np.asarray(measured_waveforms[mapping['channel']],dtype=float)
+                        if wave.size < 2 or not np.isfinite(wave).all():
+                            raise RuntimeError(f"Invalid Pico capture for {mapping['board']} / {mapping['testpoint']}")
+                        prefix=f"{mapping['board']}_{mapping['testpoint']}"
+                        row[f'{prefix}_mean_v']=float(wave.mean())
+                        row[f'{prefix}_std_v']=float(wave.std(ddof=1))
+                        row[f'{prefix}_vpp_v']=float(np.ptp(wave))
                 writer.writerow(row);output.flush();results.append(row)
                 if on_step is not None:
                     on_step(row, len(frequencies))
@@ -289,7 +324,11 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
             if connected and active:
                 device.output_off()
         finally:
-            device.close()
+            try:
+                device.close()
+            finally:
+                if reader_connected:
+                    reader.close()
 
 
 def main():
