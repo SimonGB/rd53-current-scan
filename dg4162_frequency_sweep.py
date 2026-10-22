@@ -289,9 +289,15 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
         with (path/'frequency_steps.csv').open('w',newline='') as output:
             fieldnames=['index','requested_hz','readback_hz','dwell_s','elapsed_s','time_utc']
             if profile is not None:
+                from collections import defaultdict
                 for mapping in profile['mappings']:
                     prefix=f"{mapping['board']}_{mapping['testpoint']}"
                     fieldnames += [f'{prefix}_mean_v',f'{prefix}_std_v',f'{prefix}_vpp_v']
+                boards = sorted(set(m['board'] for m in profile['mappings']))
+                for board in boards:
+                    fieldnames += [f'{board}_gain_db',f'{board}_attenuation_db',
+                                   f'{board}_phase_deg',f'{board}_vin_fundamental_vpk',
+                                   f'{board}_vout_fundamental_vpk',f'{board}_transfer_status']
             writer=csv.DictWriter(output,fieldnames=fieldnames)
             writer.writeheader()
             # Mark activation attempt first: if the USB write raises after
@@ -323,6 +329,31 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
                         row[f'{prefix}_mean_v']=float(wave.mean())
                         row[f'{prefix}_std_v']=float(wave.std(ddof=1))
                         row[f'{prefix}_vpp_v']=float(np.ptp(wave))
+                    from frequency_response import voltage_transfer
+                    interval = getattr(reader,'sample_interval',None)
+                    if interval is None and hasattr(reader,'driver'):
+                        interval=getattr(reader.driver,'sample_interval',None)
+                    for board in boards:
+                        relevant=[m for m in profile['mappings'] if m['board']==board]
+                        def matched(label):
+                            return [m for m in relevant if
+                                    m['testpoint'].lower().replace('_','')==label]
+                        vin, vout=matched('vin'),matched('vout')
+                        try:
+                            if len(vin)!=1 or len(vout)!=1:
+                                raise ValueError('Map exactly one Vin and Vout on this board')
+                            if interval is None:
+                                raise ValueError('Pico sample interval unavailable')
+                            analysis=voltage_transfer(
+                                measured_waveforms[vin[0]['channel']],
+                                measured_waveforms[vout[0]['channel']],
+                                float(interval),frequency)
+                            for key in ('gain_db','attenuation_db','phase_deg',
+                                        'vin_fundamental_vpk','vout_fundamental_vpk'):
+                                row[f'{board}_{key}']=analysis[key]
+                            row[f'{board}_transfer_status']='ok'
+                        except (ValueError,TypeError) as exc:
+                            row[f'{board}_transfer_status']=str(exc)
                 writer.writerow(row);output.flush();results.append(row)
                 if on_step is not None:
                     on_step(row, len(frequencies))
