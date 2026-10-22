@@ -257,6 +257,9 @@ class Window(QMainWindow):
             action=self.measure_menu.addAction(title)
             action.triggered.connect(lambda checked=False, index=page_index:
                                      self.mode_select.setCurrentIndex(index))
+        self.analysis_menu=self.menuBar().addMenu('Analysis')
+        self.analysis_menu.addAction('Open old measurements…',self.open_history)
+        self.analysis_menu.addAction('Compare sweeps…',self.open_rext_compare)
         self.measure_menu.addSeparator()
         for label in ('Startup sequences (CLI tool)', 'Load regulation (planned)'):
             action=self.measure_menu.addAction(label)
