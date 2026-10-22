@@ -91,6 +91,35 @@ class DG4162Tests(unittest.TestCase):
             self.assertEqual(dev.commands[-1],':OUTP1 OFF')
             self.assertTrue(dev.closed)
 
+    def test_list_resources_returns_resource_names_not_frequency_pairs(self):
+        from dg4162_frequency_sweep import main
+        from unittest.mock import patch
+        import io
+        dev=FakeDG()
+        args=make_args('--list-resources')
+        result=run(args,manager=FakeManager(dev))
+        self.assertEqual(result,['USB0::DG4162::INSTR'])
+        with patch('sys.argv',['dg4162_frequency_sweep.py','--list-resources']), \
+             patch('dg4162_frequency_sweep.run',return_value=result), \
+             patch('sys.stdout',new_callable=io.StringIO) as stdout:
+            main()
+        self.assertIn('USB0::DG4162::INSTR',stdout.getvalue())
+
+    def test_cancel_during_dwell_disables_generator(self):
+        dev=FakeDG()
+        class InterruptingEvent:
+            def is_set(self): return False
+            def wait(self, seconds): return True
+        event=InterruptingEvent()
+        with tempfile.TemporaryDirectory() as temp:
+            args=make_args('--enable-output','--confirm-safe-interface',
+                '--amplitude-vpp','0.2','--start-hz','10','--stop-hz','100',
+                '--points','3','--output',temp)
+            with self.assertRaisesRegex(InterruptedError,'stopped by user'):
+                run(args,manager=FakeManager(dev),stop_event=event)
+            self.assertEqual(dev.commands[-1],':OUTP1 OFF')
+            self.assertTrue(dev.closed)
+
 
 if __name__=='__main__':
     unittest.main()
