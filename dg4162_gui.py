@@ -5,6 +5,9 @@ import argparse
 from pathlib import Path
 import threading
 
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QGroupBox,QLineEdit,QComboBox,
@@ -18,14 +21,16 @@ class DGWorker(QThread):
     progress = pyqtSignal(object, int)
     completed = pyqtSignal(str, bool)
 
-    def __init__(self, args):
+    def __init__(self, args, profile=None):
         super().__init__()
         self.args = args
+        self.profile = profile
         self.cancel = threading.Event()
 
     def run(self):
         try:
-            result = run(self.args, stop_event=self.cancel, on_step=self.progress.emit)
+            result = run(self.args, stop_event=self.cancel, on_step=self.progress.emit,
+                         profile=self.profile)
             self.completed.emit(str(result), True)
         except BaseException as error:
             self.completed.emit(f'{type(error).__name__}: {error}', False)
@@ -33,9 +38,11 @@ class DGWorker(QThread):
 
 class DG4162Page(QWidget):
     """Dedicated sweep mode. No output is enabled unless explicitly checked."""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, profile_provider=None):
         super().__init__(parent)
         self.worker = None
+        self.profile_provider=profile_provider
+        self.live_points=[]
         layout=QVBoxLayout(self)
         header=QLabel('DG4162 · Frequency response / stimulus')
         header.setStyleSheet('font-size:20px;font-weight:bold')
@@ -106,10 +113,15 @@ class DG4162Page(QWidget):
         self.confirm.setEnabled(False)
         self.output=QLineEdit('results/dg4162_frequency_sweep')
         opts.addRow('Result directory',self.output)
-        note=QLabel(
-            'Frequency-step log records DG4162 programming/readback only. '
-            'It does NOT yet measure regulator voltages. '
-            'The PicoScope and board-mapping workspace remains in Current/Voltage sweeps.')
+        self.measure=QCheckBox('Capture PicoScope voltages using shared Setup mappings')
+        self.measure.setChecked(profile_provider is not None)
+        opts.addRow(self.measure)
+        self.mapping_status=QLabel('Configure the PicoScope channels in Setup tab')
+        self.mapping_status.setWordWrap(True)
+        opts.addRow(self.mapping_status)
+        note=QLabel('Hameg DC current is not changed here. Each frequency gets one '
+                    'short PicoScope waveform capture. At low frequencies '
+                    'the capture can miss most of a cycle.')
         note.setWordWrap(True)
         opts.addRow(note)
         layout.addWidget(options)
@@ -128,8 +140,13 @@ class DG4162Page(QWidget):
         layout.addLayout(buttons)
         self.progress=QProgressBar()
         layout.addWidget(self.progress)
+        self.figure=Figure(figsize=(8,4),layout='constrained')
+        self.canvas=FigureCanvasQTAgg(self.figure)
+        self.canvas.setMinimumHeight(230)
+        layout.addWidget(self.canvas,2)
         self.log=QPlainTextEdit()
         self.log.setReadOnly(True)
+        self.log.setMaximumHeight(140)
         layout.addWidget(self.log,1)
         self.enable.toggled.connect(self.update_start_text)
 
@@ -208,7 +225,7 @@ class DG4162Page(QWidget):
                 answer=QMessageBox.question(
                     self,'Enable waveform output?',
                     'Confirmed connection and safe waveform levels? The DG4162 '
-                    'will emit voltage steps. No PicoScope/DUT readout is taken.',
+                    'will emit a waveform. Verify Hameg and PicoScope ground references.',
                     QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No)
                 if answer!=QMessageBox.StandardButton.Yes:
@@ -217,13 +234,30 @@ class DG4162Page(QWidget):
         except Exception as error:
             QMessageBox.warning(self,'Cannot start DG4162 sweep',str(error))
 
+    def resolve_profile(self):
+        if not self.measure.isChecked():
+            return None
+        if self.profile_provider is None:
+            raise ValueError('Shared PicoScope mapping is unavailable')
+        from mapping import validate_profile
+        profile=validate_profile(self.profile_provider())
+        if profile['backend'] != 'pico':
+            raise ValueError('Select Pico as the measurement source in Setup')
+        self.mapping_status.setText('Measuring: ' + ', '.join(
+            f"{m['board']}/{m['testpoint']} → {m['channel']}" for m in profile['mappings']))
+        return profile
+
     def launch(self,args):
+        profile=self.resolve_profile() if args.enable_output and not args.identify else None
+        self.live_points=[]
+        self.figure.clear()
+        self.canvas.draw_idle()
         self.progress.setRange(0,args.points if not args.identify else 1)
         self.progress.setValue(0)
         self.log.appendPlainText('Identifying DG4162…' if args.identify else
                                  'Starting DG4162 frequency sweep…' if args.enable_output else
                                  'Checking resource and previewing sweep (output unchanged)…')
-        self.worker=DGWorker(args)
+        self.worker=DGWorker(args,profile)
         self.worker.progress.connect(self.on_progress)
         self.worker.completed.connect(self.on_completed)
         self.start.setEnabled(False)
@@ -231,10 +265,30 @@ class DG4162Page(QWidget):
         self.worker.start()
 
     def on_progress(self,row,total):
+        self.live_points.append(row)
+        voltage_columns=sorted(k for k in row if k.endswith('_mean_v'))
+        if voltage_columns:
+            self.figure.clear()
+            ax=self.figure.subplots()
+            freqs=[entry['readback_hz'] for entry in self.live_points]
+            for col in voltage_columns:
+                values=[entry.get(col,float('nan')) for entry in self.live_points]
+                ax.plot(freqs,values,marker='o',label=col[:-7].replace('_',' / '))
+            if self.spacing.currentText()=='log':
+                ax.set_xscale('log')
+            ax.set(xlabel='DG4162 frequency (Hz)',ylabel='Pico mean voltage (V)',
+                   title='Live mapped testpoints')
+            ax.grid(alpha=.3)
+            ax.legend(fontsize=8)
+            self.canvas.draw_idle()
         self.progress.setRange(0,total)
         self.progress.setValue(row['index']+1)
-        self.log.appendPlainText(f"{row['index']+1}/{total}: "
-                                 f"{row['readback_hz']:.6g} Hz, dwell {row['dwell_s']:.3f} s")
+        values=[f"{k[:-7]}={v:.4g} V" for k,v in row.items()
+                if k.endswith('_mean_v') and isinstance(v,(int,float))]
+        self.log.appendPlainText(
+            f"{row['index']+1}/{total}: {row['readback_hz']:.6g} Hz, "
+            f"dwell {row['dwell_s']:.3f} s" +
+            (' · ' + ' · '.join(values) if values else ''))
 
     def on_completed(self,text,success):
         self.log.appendPlainText(('Completed: ' if success else 'Stopped/error: ')+text)
