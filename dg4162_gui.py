@@ -119,6 +119,20 @@ class DG4162Page(QWidget):
         self.mapping_status=QLabel('Configure the PicoScope channels in Setup tab')
         self.mapping_status.setWordWrap(True)
         opts.addRow(self.mapping_status)
+        self.capture_window=QDoubleSpinBox()
+        self.capture_window.setRange(.001,2)
+        self.capture_window.setDecimals(3)
+        self.capture_window.setValue(.02)
+        opts.addRow('Pico capture window [s]',self.capture_window)
+        self.capture_rate=QDoubleSpinBox()
+        self.capture_rate.setRange(1000,10_000_000)
+        self.capture_rate.setDecimals(0)
+        self.capture_rate.setValue(1_000_000)
+        opts.addRow('Pico sample rate [S/s]',self.capture_rate)
+        self.plot_quantity=QComboBox()
+        self.plot_quantity.addItems(['Mean voltage','Peak-to-peak voltage','Standard deviation'])
+        self.plot_quantity.currentIndexChanged.connect(self.redraw_live)
+        opts.addRow('Live plot quantity',self.plot_quantity)
         note=QLabel('Hameg DC current is not changed here. Each frequency gets one '
                     'short PicoScope waveform capture. At low frequencies '
                     'the capture can miss most of a cycle.')
@@ -162,6 +176,8 @@ class DG4162Page(QWidget):
         args.points=self.points.value()
         args.spacing=self.spacing.currentText()
         args.output=Path(self.output.text()).expanduser()
+        args.pico_capture_time=self.capture_window.value()
+        args.pico_sample_rate=self.capture_rate.value()
         for key,box in self.numeric.items():
             setattr(args,key,box.value())
         args.enable_output=self.enable.isChecked() and not identify
@@ -264,23 +280,29 @@ class DG4162Page(QWidget):
         self.stop.setEnabled(True)
         self.worker.start()
 
-    def on_progress(self,row,total):
-        self.live_points.append(row)
-        voltage_columns=sorted(k for k in row if k.endswith('_mean_v'))
-        if voltage_columns:
-            self.figure.clear()
+    def redraw_live(self, *unused):
+        if not self.live_points:
+            return
+        suffix=('_mean_v','_vpp_v','_std_v')[self.plot_quantity.currentIndex()]
+        names=sorted(k for row in self.live_points for k in row if k.endswith(suffix))
+        self.figure.clear()
+        if names:
             ax=self.figure.subplots()
-            freqs=[entry['readback_hz'] for entry in self.live_points]
-            for col in voltage_columns:
-                values=[entry.get(col,float('nan')) for entry in self.live_points]
-                ax.plot(freqs,values,marker='o',label=col[:-7].replace('_',' / '))
+            frequencies=[row['readback_hz'] for row in self.live_points]
+            for name in set(names):
+                y=[row.get(name,float('nan')) for row in self.live_points]
+                ax.plot(frequencies,y,marker='o',label=name[:-len(suffix)].replace('_',' / '))
             if self.spacing.currentText()=='log':
                 ax.set_xscale('log')
-            ax.set(xlabel='DG4162 frequency (Hz)',ylabel='Pico mean voltage (V)',
-                   title='Live mapped testpoints')
+            ax.set(xlabel='Generator frequency [Hz]',ylabel=self.plot_quantity.currentText()+' [V]',
+                   title='Live mapped PicoScope testpoints')
             ax.grid(alpha=.3)
             ax.legend(fontsize=8)
-            self.canvas.draw_idle()
+        self.canvas.draw_idle()
+
+    def on_progress(self,row,total):
+        self.live_points.append(row)
+        self.redraw_live()
         self.progress.setRange(0,total)
         self.progress.setValue(row['index']+1)
         values=[f"{k[:-7]}={v:.4g} V" for k,v in row.items()
