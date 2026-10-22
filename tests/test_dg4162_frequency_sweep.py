@@ -98,7 +98,10 @@ class DG4162Tests(unittest.TestCase):
         dev=FakeDG()
         args=make_args('--list-resources')
         result=run(args,manager=FakeManager(dev))
-        self.assertEqual(result,['USB0::DG4162::INSTR'])
+        self.assertIn('USB0::DG4162::INSTR', result)
+        # Discovery also includes real /dev/usbtmc* entries when present.
+        # Their presence is machine-dependent and must not fail this test.
+        self.assertEqual(len(result), len(set(result)))
         with patch('sys.argv',['dg4162_frequency_sweep.py','--list-resources']), \
              patch('dg4162_frequency_sweep.run',return_value=result), \
              patch('sys.stdout',new_callable=io.StringIO) as stdout:
