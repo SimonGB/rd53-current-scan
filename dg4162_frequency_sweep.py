@@ -47,8 +47,8 @@ class DG4162:
             self.manager=pyvisa.ResourceManager()
         self.device=self.manager.open_resource(self.resource)
         self.device.timeout=3000
-        self.device.write_termination='\\n'
-        self.device.read_termination='\\n'
+        self.device.write_termination='\n'
+        self.device.read_termination='\n'
         identity=self.device.query('*IDN?').strip()
         if 'DG4162' not in identity.upper():
             raise RuntimeError(f'Wrong instrument: {identity}')
