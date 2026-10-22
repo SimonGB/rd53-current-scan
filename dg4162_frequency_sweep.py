@@ -192,8 +192,10 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep):
             writer=csv.DictWriter(output,fieldnames=['index','requested_hz',
                        'readback_hz','dwell_s','elapsed_s','time_utc'])
             writer.writeheader()
-            device.output_on()
+            # Mark activation attempt first: if the USB write raises after
+            # enabling the physical output, finally still sends OFF.
             active=True
+            device.output_on()
             for index, frequency in enumerate(frequencies):
                 device.set_frequency(frequency)
                 actual=device.frequency_readback()
