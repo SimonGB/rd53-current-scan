@@ -196,6 +196,10 @@ def make_parser():
     p.add_argument('--min-dwell-s',type=float,default=.2,
                    help='Minimum frequency-step hold time (s)')
     p.add_argument('--max-dwell-s',type=float,default=30)
+    p.add_argument('--pico-capture-time',type=float,default=.02,
+                   help='Time window of each mapped PicoScope capture [s]')
+    p.add_argument('--pico-sample-rate',type=float,default=1e6,
+                   help='PicoScope sample rate [samples/s]')
     p.add_argument('--output',type=Path,default=Path('results/dg4162_frequency_sweep'))
     return p
 
@@ -219,6 +223,11 @@ def validate(args):
             raise ValueError('Output amplitude must be in (0, 2] Vpp; not a DUT safety guarantee')
         if abs(args.offset_v) + args.amplitude_vpp/2 > 2:
             raise ValueError('High/low waveform excursions exceed ±2 V guardrail')
+    if getattr(args,'pico_capture_time',.02) <= 0 or getattr(args,'pico_sample_rate',1e6) <= 0:
+        raise ValueError('Pico capture time and sampling frequency must be positive')
+    if (getattr(args,'pico_capture_time',.02) *
+            getattr(args,'pico_sample_rate',1e6) > 2_000_000):
+        raise ValueError('Pico capture exceeds two million samples per channel')
     if not (args.cycles >= 1 and 0 < args.min_dwell_s <= args.max_dwell_s <= 120):
         raise ValueError('Invalid cycles/dwell limits')
     if not (args.list_resources or args.identify):
@@ -246,8 +255,9 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
             raise ValueError('DG4162 response acquisition requires PicoScope mappings')
         from station import MappedPico
         if reader is None:
-            options=argparse.Namespace(resolution=12, sample_rate=1e6,
-                                       capture_time=.02)
+            options=argparse.Namespace(resolution=12,
+                sample_rate=getattr(args,'pico_sample_rate',1e6),
+                capture_time=getattr(args,'pico_capture_time',.02))
             reader=MappedPico(options,profile['mappings'])
     device=DG4162(args.resource,args.channel,manager)
     reader_connected=False
