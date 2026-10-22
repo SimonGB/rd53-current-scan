@@ -133,12 +133,12 @@ class DG4162Tests(unittest.TestCase):
         with patch('dg4162_frequency_sweep.os.open',return_value=descriptor) as opened, \
              patch('dg4162_frequency_sweep.os.write',side_effect=fake_write), \
              patch('dg4162_frequency_sweep.os.read',
-                   return_value=b'RIGOL TECHNOLOGIES,DG4162,123456,00.01\\n'), \
+                   return_value=b'RIGOL TECHNOLOGIES,DG4162,123456,00.01\n'), \
              patch('dg4162_frequency_sweep.os.close') as closed:
             device=DG4162('/dev/usbtmc0')
             identity=device.connect()
             self.assertIn('DG4162',identity)
-            self.assertEqual(commands,[b'*IDN?\\n'])
+            self.assertEqual(commands,[b'*IDN?\n'])
             device.close()
             opened.assert_called_once()
             closed.assert_called_once_with(descriptor)
