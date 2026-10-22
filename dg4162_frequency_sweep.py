@@ -10,6 +10,7 @@ import csv
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import time
 
@@ -30,6 +31,64 @@ def frequency_points(start_hz, stop_hz, count, spacing):
     raise ValueError('Spacing must be linear or log')
 
 
+class LinuxUSBTMC:
+    """Linux kernel USBTMC character-device transport (/dev/usbtmcN).
+
+    SCPI queries use one write and one read on the same open descriptor.
+    This avoids libusb/VISA device enumeration and does not toggle outputs.
+    """
+    def __init__(self, path):
+        self.path = str(path)
+        self.handle = None
+        self.timeout = None
+        self.write_termination = '\\n'
+        self.read_termination = '\\n'
+
+    def open(self):
+        self.handle = os.open(self.path, os.O_RDWR | getattr(os, 'O_CLOEXEC', 0))
+        return self
+
+    def write(self, command):
+        if self.handle is None:
+            raise RuntimeError('USBTMC device not open')
+        payload = (command.rstrip('\\n') + '\\n').encode('ascii')
+        written = os.write(self.handle, payload)
+        if written != len(payload):
+            raise OSError(f'Short USBTMC write: {written}/{len(payload)} bytes')
+
+    def query(self, command):
+        self.write(command)
+        response = os.read(self.handle, 4096).decode('ascii',errors='replace').strip()
+        if not response:
+            raise RuntimeError(f'Empty USBTMC response to {command}')
+        return response
+
+    def close(self):
+        if self.handle is not None:
+            os.close(self.handle)
+            self.handle = None
+
+
+def discover_resources(manager=None):
+    """Return unique VISA identifiers plus Linux kernel /dev/usbtmc* paths."""
+    result = []
+    if manager is None:
+        try:
+            import pyvisa
+            manager = pyvisa.ResourceManager('@py')
+            try:
+                result.extend(manager.list_resources())
+            finally:
+                manager.close()
+        except (ImportError, OSError, Exception):
+            # The Linux usbtmc device exists even if PyVISA or libusb is missing.
+            pass
+    else:
+        result.extend(manager.list_resources())
+    result.extend(str(p) for p in sorted(Path('/dev').glob('usbtmc[0-9]*')))
+    return list(dict.fromkeys(result))
+
+
 class DG4162:
     """Small VISA transport wrapper with conservative remote commands."""
     def __init__(self, resource, channel=1, manager=None):
@@ -42,13 +101,17 @@ class DG4162:
         self.owns_manager=manager is None
 
     def connect(self):
-        if self.manager is None:
-            import pyvisa
-            self.manager=pyvisa.ResourceManager()
-        self.device=self.manager.open_resource(self.resource)
-        self.device.timeout=3000
-        self.device.write_termination='\n'
-        self.device.read_termination='\n'
+        if self.resource.startswith('/dev/usbtmc'):
+            self.device=LinuxUSBTMC(self.resource).open()
+            self.owns_manager=False
+        else:
+            if self.manager is None:
+                import pyvisa
+                self.manager=pyvisa.ResourceManager('@py')
+            self.device=self.manager.open_resource(self.resource)
+            self.device.timeout=3000
+            self.device.write_termination='\n'
+            self.device.read_termination='\n'
         identity=self.device.query('*IDN?').strip()
         if 'DG4162' not in identity.upper():
             raise RuntimeError(f'Wrong instrument: {identity}')
@@ -101,7 +164,7 @@ class DG4162:
 
 def make_parser():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--resource', help='USB VISA descriptor or LAN TCPIP resource')
+    p.add_argument('--resource', help='VISA identifier, LAN resource, or Linux /dev/usbtmc0 device')
     p.add_argument('--identify',action='store_true',help='Identify generator only; do not change output')
     p.add_argument('--list-resources',action='store_true',help='Show VISA resources; do not energize anything')
     p.add_argument('--simulate',action='store_true',help='Preview frequencies without hardware')
@@ -156,14 +219,7 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
         stop_event=None, on_step=None):
     validate(args)
     if args.list_resources:
-        if manager is None:
-            import pyvisa
-            manager=pyvisa.ResourceManager()
-            try:
-                return list(manager.list_resources())
-            finally:
-                manager.close()
-        return list(manager.list_resources())
+        return discover_resources(manager)
     if args.simulate:
         return [(f,max(args.min_dwell_s,min(args.max_dwell_s,args.cycles/f)))
                 for f in frequency_points(args.start_hz,args.stop_hz,args.points,args.spacing)]
