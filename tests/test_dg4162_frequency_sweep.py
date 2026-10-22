@@ -139,6 +139,8 @@ class DG4162Tests(unittest.TestCase):
             identity=device.connect()
             self.assertIn('DG4162',identity)
             self.assertEqual(commands,[b'*IDN?\n'])
+            self.assertEqual(commands[0][-1], 0x0A)  # ASCII LF, not literal backslash-n
+            self.assertNotIn(b'\\\\n', commands[0])
             device.close()
             opened.assert_called_once()
             closed.assert_called_once_with(descriptor)
