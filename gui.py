@@ -235,78 +235,36 @@ class Window(QMainWindow):
         for box in self.fields.values():box.valueChanged.connect(self.reset_eta)
         self.captures.valueChanged.connect(self.reset_eta);self.reverse.toggled.connect(self.reset_eta);self.sim.toggled.connect(self.reset_eta)
         self.update_eta()
-        # Keep the board/testpoint editor, acquisitions and plots in shared
-        # top-level workspaces rather than hiding the wiring on mode changes.
+        # Keep the original, proven splitter intact. The board editor,
+        # scan controls and live plots are never removed or reparented.
         from dg4162_gui import DG4162Page
-        self.station_tabs=QTabWidget(root)
-        self.setup_page=QWidget()
-        setup_layout=QVBoxLayout(self.setup_page)
-        self.measure_page=QWidget()
-        measure_layout=QVBoxLayout(self.measure_page)
-        self.results_page=QWidget()
-        result_layout=QVBoxLayout(self.results_page)
-        self.station_tabs.addTab(self.setup_page,'1 · Setup boards & testpoints')
-        self.station_tabs.addTab(self.measure_page,'2 · Measurements')
-        self.station_tabs.addTab(self.results_page,'3 · Results & plots')
-        layout.removeWidget(splitter)
-        splitter.hide()
-        # Move existing Qt widgets/layouts: all mapping objects/signals,
-        # scan controls, plot canvases and data remain the same objects.
-        for index in range(5):
-            item=rl.takeAt(0)
-            if item.widget() is not None:
-                setup_layout.addWidget(item.widget())
-            elif item.layout() is not None:
-                moved_layout=item.layout()
-                moved_layout.setParent(None)
-                setup_layout.addLayout(moved_layout)
-        for index in range(2):
-            item=rl.takeAt(0)
-            if item.widget() is not None:
-                result_layout.addWidget(item.widget())
-            elif item.layout() is not None:
-                moved_layout=item.layout()
-                moved_layout.setParent(None)
-                result_layout.addLayout(moved_layout)
-        side.setParent(None)
-        self.measure_pages=QStackedWidget(self.measure_page)
-        scan_page=QWidget()
-        scan_layout=QVBoxLayout(scan_page)
-        scan_layout.setContentsMargins(0,0,0,0)
-        scan_layout.addWidget(side)
-        self.measure_pages.addWidget(scan_page)
-        self.dg4162_page=DG4162Page(self,profile_provider=self.dg_measurement_profile)
-        self.measure_pages.addWidget(self.dg4162_page)
-        self.mode_select=QComboBox()
-        self.mode_select.addItem('Current / voltage sweeps','scan')
-        self.mode_select.addItem('DG4162 frequency sweep + PicoScope','dg4162')
-        select_row=QHBoxLayout()
-        select_row.addWidget(QLabel('Measurement mode'))
-        select_row.addWidget(self.mode_select)
-        select_row.addStretch()
-        measure_layout.addLayout(select_row)
-        measure_layout.addWidget(self.measure_pages,1)
-        layout.addWidget(self.station_tabs,1)
-        self.setCentralWidget(root)
-        self.mode_select.currentIndexChanged.connect(self.change_measurement_mode)
+        self.station_tabs=QTabWidget(self)
+        self.station_tabs.addTab(root, '1 · Boards / DC sweeps')
+        self.dg4162_page=DG4162Page(self, profile_provider=self.dg_measurement_profile)
+        self.station_tabs.addTab(self.dg4162_page,'2 · Rigol frequency response')
+        analysis=QWidget(self)
+        analysis_layout=QVBoxLayout(analysis)
+        analysis_layout.addWidget(QLabel('Saved measurements and analysis'))
+        history_button=QPushButton('Open saved measurements…')
+        history_button.clicked.connect(self.open_history)
+        analysis_layout.addWidget(history_button)
+        compare_button=QPushButton('Compare sweeps / Rext / Vofshalf…')
+        compare_button.clicked.connect(self.open_rext_compare)
+        analysis_layout.addWidget(compare_button)
+        analysis_layout.addStretch()
+        self.station_tabs.addTab(analysis,'3 · Analysis')
+        self.setCentralWidget(self.station_tabs)
+        self.station_tabs.currentChanged.connect(self.change_measurement_mode)
         self.measure_menu=self.menuBar().addMenu('Measurements')
-        self.measure_menu.addAction('Board & testpoint setup',
-                                    lambda:self.station_tabs.setCurrentIndex(0))
-        self.measure_menu.addAction('Current / voltage sweep',
-                                    lambda:(self.mode_select.setCurrentIndex(0),
-                                            self.station_tabs.setCurrentIndex(1)))
-        self.measure_menu.addAction('DG4162 + PicoScope',
-                                    lambda:(self.mode_select.setCurrentIndex(1),
-                                            self.station_tabs.setCurrentIndex(1)))
-        self.measure_menu.addAction('Results & plots',
-                                    lambda:self.station_tabs.setCurrentIndex(2))
+        for index,title in enumerate(('Boards and DC sweeps',
+                                      'Rigol frequency response','Analysis')):
+            self.measure_menu.addAction(title,
+                                        lambda checked=False,i=index:
+                                        self.station_tabs.setCurrentIndex(i))
         self.measure_menu.addSeparator()
-        for label in ('Startup sequences (CLI tool)','Load regulation (planned)'):
-            action=self.measure_menu.addAction(label)
+        for title in ('Startup sequences (CLI)', 'Load regulation (planned)'):
+            action=self.measure_menu.addAction(title)
             action.setEnabled(False)
-        self.analysis_menu=self.menuBar().addMenu('Analysis')
-        self.analysis_menu.addAction('Open old measurements…',self.open_history)
-        self.analysis_menu.addAction('Compare sweeps…',self.open_rext_compare)
         self.setStyleSheet(self.styleSheet()+'''QMainWindow,QWidget {background:#0c1825;color:#d8e5f2;font-size:12px;}
             QLineEdit,QDoubleSpinBox,QSpinBox,QComboBox,QPlainTextEdit,QTableWidget {background:#172a3c;border:1px solid #30475d;border-radius:5px;padding:4px;}
             QPushButton {background:#22394e;border:1px solid #36546b;border-radius:6px;padding:7px;}
@@ -893,28 +851,29 @@ class Window(QMainWindow):
             canvas.setMinimumHeight(260 * len(figure.axes))
             canvas.draw_idle()
     def dg_measurement_profile(self):
-        """Snapshot the SAME mapped testpoints used by regular Hameg sweeps."""
+        """Read the existing PicoScope mappings from the untouched setup GUI."""
         profile=validate_profile(active_profile(self.snapshot()))
-        if profile['backend'] != 'pico':
-            raise ValueError('For DG4162 measurements select Pico in Setup')
+        if profile['backend']!='pico':
+            raise ValueError('Select Pico as measurement source on Boards tab')
         return profile
 
-    def change_measurement_mode(self, index):
-        if index == 0 and hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
-            QMessageBox.information(self, 'Generator sweep running',
-                                    'Stop the DG4162 sweep and let the output disable before changing modes.')
-            self.mode_select.blockSignals(True)
-            self.mode_select.setCurrentIndex(1)
-            self.mode_select.blockSignals(False)
+    def change_measurement_mode(self,index):
+        previous=getattr(self,'_previous_station_tab',0)
+        if index==1 and self.running:
+            QMessageBox.information(self,'Hameg scan running',
+                                    'Finish the Hameg scan before starting a Rigol acquisition.')
+            self.station_tabs.blockSignals(True)
+            self.station_tabs.setCurrentIndex(previous)
+            self.station_tabs.blockSignals(False)
             return
-        if index == 1 and self.running:
-            QMessageBox.information(self, 'Scan running',
-                                    'Stop the Hameg scan before opening a different measurement mode.')
-            self.mode_select.blockSignals(True)
-            self.mode_select.setCurrentIndex(0)
-            self.mode_select.blockSignals(False)
+        if index==0 and self.dg4162_page.is_running():
+            QMessageBox.information(self,'Generator sweep running',
+                                    'Stop the Rigol acquisition before switching to DC scans.')
+            self.station_tabs.blockSignals(True)
+            self.station_tabs.setCurrentIndex(previous)
+            self.station_tabs.blockSignals(False)
             return
-        self.measure_pages.setCurrentIndex(index)
+        self._previous_station_tab=index
 
     def closeEvent(self,event):
         if hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
