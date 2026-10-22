@@ -182,6 +182,11 @@ class DG4162Page(QWidget):
         try:
             args=self.collect()
             frequencies=frequency_points(args.start_hz,args.stop_hz,args.points,args.spacing)
+            # Preview never needs a VISA connection or an enabled output.
+            # Validate the numeric sweep settings with a synthetic resource.
+            args.resource=args.resource or 'PREVIEW_ONLY'
+            args.enable_output=False
+            args.confirm_safe_interface=False
             validate(args)
             self.progress.setRange(0,len(frequencies))
             self.progress.setValue(0)
@@ -235,7 +240,9 @@ class DG4162Page(QWidget):
         self.log.appendPlainText(('Completed: ' if success else 'Stopped/error: ')+text)
         self.start.setEnabled(True)
         self.stop.setEnabled(False)
-        self.worker=None
+        # Keep QThread referenced until it really finishes (Qt emits the
+        # completed signal from inside run(), just before run() returns).
+        # The next start replaces a finished worker safely.
 
     def stop_run(self):
         if self.worker and self.worker.isRunning():
