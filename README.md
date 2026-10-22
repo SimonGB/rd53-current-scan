@@ -1116,3 +1116,19 @@ device, power-cycle/reconnect the instrument if necessary, then retry
 `python dg4162_frequency_sweep.py --resource /dev/usbtmc0 --identify`.
 Our code now reports a more informative exception when this read times
 out; identification does not enable generator output.
+
+
+### DG4162 remote-interface error after USBTMC identification
+
+An earlier version of the direct `/dev/usbtmc0` driver appended the
+**literal ASCII characters backslash and n** to SCPI commands instead of
+an actual line-feed byte (0x0A). A DG4162 can report a remote command
+error and then time out while handling such a malformed `*IDN?` request.
+
+The driver now terminates USBTMC commands with ASCII LF. A regression
+test asserts the exact outgoing identification bytes are
+`b'*IDN?\\n'` (where `\\n` means one line-feed byte).
+After updating, use `--identify` first, with generator output
+disabled, to confirm the instrument responds. Persistent timeouts after
+this correction warrant checking USB Device = PC, exclusive device
+access, USB cable, and alternate LAN/VISA control.
