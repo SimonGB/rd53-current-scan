@@ -235,35 +235,74 @@ class Window(QMainWindow):
         for box in self.fields.values():box.valueChanged.connect(self.reset_eta)
         self.captures.valueChanged.connect(self.reset_eta);self.reverse.toggled.connect(self.reset_eta);self.sim.toggled.connect(self.reset_eta)
         self.update_eta()
-        # Shared navigation shell: keep the entire established scan/wiring
-        # workspace unchanged while new measurement modes get their own pages.
+        # Keep the board/testpoint editor, acquisitions and plots in shared
+        # top-level workspaces rather than hiding the wiring on mode changes.
         from dg4162_gui import DG4162Page
-        self.measure_pages=QStackedWidget(self)
-        self.measure_pages.addWidget(root)
-        self.dg4162_page=DG4162Page(self)
+        self.station_tabs=QTabWidget(root)
+        self.setup_page=QWidget()
+        setup_layout=QVBoxLayout(self.setup_page)
+        self.measure_page=QWidget()
+        measure_layout=QVBoxLayout(self.measure_page)
+        self.results_page=QWidget()
+        result_layout=QVBoxLayout(self.results_page)
+        self.station_tabs.addTab(self.setup_page,'1 · Setup boards & testpoints')
+        self.station_tabs.addTab(self.measure_page,'2 · Measurements')
+        self.station_tabs.addTab(self.results_page,'3 · Results & plots')
+        layout.removeWidget(splitter)
+        splitter.hide()
+        # Move existing Qt widgets/layouts: all mapping objects/signals,
+        # scan controls, plot canvases and data remain the same objects.
+        for index in range(5):
+            item=rl.takeAt(0)
+            if item.widget() is not None:
+                setup_layout.addWidget(item.widget())
+            elif item.layout() is not None:
+                setup_layout.addLayout(item.layout())
+        for index in range(2):
+            item=rl.takeAt(0)
+            if item.widget() is not None:
+                result_layout.addWidget(item.widget())
+            elif item.layout() is not None:
+                result_layout.addLayout(item.layout())
+        side.setParent(None)
+        self.measure_pages=QStackedWidget(self.measure_page)
+        scan_page=QWidget()
+        scan_layout=QVBoxLayout(scan_page)
+        scan_layout.setContentsMargins(0,0,0,0)
+        scan_layout.addWidget(side)
+        self.measure_pages.addWidget(scan_page)
+        self.dg4162_page=DG4162Page(self,profile_provider=self.dg_measurement_profile)
         self.measure_pages.addWidget(self.dg4162_page)
-        self.setCentralWidget(self.measure_pages)
-        self.measure_menu=self.menuBar().addMenu('Measurements')
         self.mode_select=QComboBox()
-        self.mode_select.addItem('Current / voltage sweeps', 'scan')
-        self.mode_select.addItem('DG4162 frequency sweep', 'dg4162')
-        self.mode_toolbar=QToolBar('Measurement mode', self)
-        self.mode_toolbar.setMovable(False)
-        self.mode_toolbar.addWidget(QLabel('Measurement mode: '))
-        self.mode_toolbar.addWidget(self.mode_select)
-        self.addToolBar(self.mode_toolbar)
+        self.mode_select.addItem('Current / voltage sweeps','scan')
+        self.mode_select.addItem('DG4162 frequency sweep + PicoScope','dg4162')
+        select_row=QHBoxLayout()
+        select_row.addWidget(QLabel('Measurement mode'))
+        select_row.addWidget(self.mode_select)
+        select_row.addStretch()
+        measure_layout.addLayout(select_row)
+        measure_layout.addWidget(self.measure_pages,1)
+        layout.addWidget(self.station_tabs,1)
+        self.setCentralWidget(root)
         self.mode_select.currentIndexChanged.connect(self.change_measurement_mode)
-        for page_index,title in [(0,'Current / voltage sweeps'),(1,'DG4162 frequency sweep')]:
-            action=self.measure_menu.addAction(title)
-            action.triggered.connect(lambda checked=False, index=page_index:
-                                     self.mode_select.setCurrentIndex(index))
+        self.measure_menu=self.menuBar().addMenu('Measurements')
+        self.measure_menu.addAction('Board & testpoint setup',
+                                    lambda:self.station_tabs.setCurrentIndex(0))
+        self.measure_menu.addAction('Current / voltage sweep',
+                                    lambda:(self.mode_select.setCurrentIndex(0),
+                                            self.station_tabs.setCurrentIndex(1)))
+        self.measure_menu.addAction('DG4162 + PicoScope',
+                                    lambda:(self.mode_select.setCurrentIndex(1),
+                                            self.station_tabs.setCurrentIndex(1)))
+        self.measure_menu.addAction('Results & plots',
+                                    lambda:self.station_tabs.setCurrentIndex(2))
+        self.measure_menu.addSeparator()
+        for label in ('Startup sequences (CLI tool)','Load regulation (planned)'):
+            action=self.measure_menu.addAction(label)
+            action.setEnabled(False)
         self.analysis_menu=self.menuBar().addMenu('Analysis')
         self.analysis_menu.addAction('Open old measurements…',self.open_history)
         self.analysis_menu.addAction('Compare sweeps…',self.open_rext_compare)
-        self.measure_menu.addSeparator()
-        for label in ('Startup sequences (CLI tool)', 'Load regulation (planned)'):
-            action=self.measure_menu.addAction(label)
-            action.setEnabled(False)
         self.setStyleSheet(self.styleSheet()+'''QMainWindow,QWidget {background:#0c1825;color:#d8e5f2;font-size:12px;}
             QLineEdit,QDoubleSpinBox,QSpinBox,QComboBox,QPlainTextEdit,QTableWidget {background:#172a3c;border:1px solid #30475d;border-radius:5px;padding:4px;}
             QPushButton {background:#22394e;border:1px solid #36546b;border-radius:6px;padding:7px;}
@@ -849,6 +888,13 @@ class Window(QMainWindow):
             draw_sweep(figure,visible,direction,self.plot_title.text(),self.plot_limit(self.rows),color_rows=self.rows,configuration=self.plot_configuration.text() if self.show_configuration.isChecked() else "",dark=True,show_difference=self.show_difference.isChecked(),mode_hint=self.plot_axis_mode())
             canvas.setMinimumHeight(260 * len(figure.axes))
             canvas.draw_idle()
+    def dg_measurement_profile(self):
+        """Snapshot the SAME mapped testpoints used by regular Hameg sweeps."""
+        profile=validate_profile(active_profile(self.snapshot()))
+        if profile['backend'] != 'pico':
+            raise ValueError('For DG4162 measurements select Pico in Setup')
+        return profile
+
     def change_measurement_mode(self, index):
         if index == 0 and hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
             QMessageBox.information(self, 'Generator sweep running',
