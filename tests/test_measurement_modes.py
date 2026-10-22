@@ -24,26 +24,30 @@ class TestMeasurementModes(unittest.TestCase):
         finally:
             page.close()
 
-    def test_main_gui_mode_navigation_preserves_mapping(self):
+    def test_main_gui_tabs_preserve_original_splitter_and_mapping(self):
         from gui import Window
+        from PyQt6.QtWidgets import QSplitter
         window=Window()
         try:
-            self.assertEqual(window.mode_select.count(),2)
             self.assertEqual(window.station_tabs.count(),3)
-            self.assertEqual(window.station_tabs.tabText(0),'1 · Setup boards & testpoints')
-            self.assertEqual(window.station_tabs.tabText(1),'2 · Measurements')
-            self.assertEqual(window.station_tabs.tabText(2),'3 · Results & plots')
-            self.assertEqual(window.measure_pages.currentIndex(),0)
-            original_mapping=window.profile
-            window.mode_select.setCurrentIndex(1)
-            self.assertEqual(window.measure_pages.currentIndex(),1)
-            self.assertIsNotNone(window.dg4162_page)
+            self.assertIn('Boards',window.station_tabs.tabText(0))
+            self.assertIn('Rigol',window.station_tabs.tabText(1))
+            self.assertIn('Analysis',window.station_tabs.tabText(2))
+            self.assertEqual(window.station_tabs.currentIndex(),0)
+            self.assertTrue(window.station_tabs.widget(0).findChildren(QSplitter))
+            original_profile=window.profile
+            original_board_tabs=window.boardtabs
+            original_figure=window.figure
+            window.station_tabs.setCurrentIndex(1)
+            self.assertEqual(window.station_tabs.currentIndex(),1)
             self.assertTrue(window.dg4162_page.measure.isChecked())
             self.assertEqual(window.dg_measurement_profile()['backend'],'pico')
-            self.assertFalse(window.dg4162_page.enable.isChecked())
-            window.mode_select.setCurrentIndex(0)
-            self.assertEqual(window.measure_pages.currentIndex(),0)
-            self.assertIs(window.profile,original_mapping)
+            self.assertIn('attenuation',window.dg4162_page.plot_quantity.itemText(3).lower())
+            window.station_tabs.setCurrentIndex(0)
+            self.assertEqual(window.station_tabs.currentIndex(),0)
+            self.assertIs(window.profile,original_profile)
+            self.assertIs(window.boardtabs,original_board_tabs)
+            self.assertIs(window.figure,original_figure)
         finally:
             window.close()
 
