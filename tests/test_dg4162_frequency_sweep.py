@@ -226,6 +226,37 @@ class DG4162Tests(unittest.TestCase):
             self.assertTrue(pico.closed)
             self.assertEqual(rigol.commands[-1],':OUTP1 OFF')
 
+    def test_input_referenced_gain_and_phase_saved_per_board(self):
+        import csv
+        import numpy as np
+        from mapping import default_profile
+        class SyntheticPico:
+            sample_interval=1e-5
+            def __init__(self,rigol):self.rigol=rigol
+            def connect(self):pass
+            def close(self):pass
+            def capture(self):
+                t=np.arange(10_000)*self.sample_interval
+                angle=2*np.pi*self.rigol.frequency*t
+                return {'A':1.0+.1*np.sin(angle),
+                        'B':1.8+.01*np.sin(angle-np.pi/3)}
+        rigol=FakeDG()
+        with tempfile.TemporaryDirectory() as folder:
+            args=make_args('--enable-output','--confirm-safe-interface',
+                '--amplitude-vpp','0.2','--start-hz','100','--stop-hz','1000',
+                '--points','3','--output',folder)
+            path=run(args,manager=FakeManager(rigol),
+                     sleeper=lambda dt:None,profile=default_profile(),
+                     reader=SyntheticPico(rigol))
+            with (path/'frequency_steps.csv').open() as handle:
+                rows=list(csv.DictReader(handle))
+            self.assertEqual(len(rows),3)
+            for row in rows:
+                self.assertEqual(row['board1_transfer_status'],'ok')
+                self.assertAlmostEqual(float(row['board1_gain_db']),-20,delta=.1)
+                self.assertAlmostEqual(float(row['board1_attenuation_db']),20,delta=.1)
+                self.assertAlmostEqual(float(row['board1_phase_deg']),-60,delta=1)
+
 
 if __name__=='__main__':
     unittest.main()
