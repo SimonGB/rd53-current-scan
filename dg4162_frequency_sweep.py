@@ -152,7 +152,8 @@ def validate(args):
         frequency_points(args.start_hz,args.stop_hz,args.points,args.spacing)
 
 
-def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep):
+def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
+        stop_event=None, on_step=None):
     validate(args)
     if args.list_resources:
         if manager is None:
@@ -197,16 +198,23 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep):
             active=True
             device.output_on()
             for index, frequency in enumerate(frequencies):
+                if stop_event is not None and stop_event.is_set():
+                    raise InterruptedError('DG4162 frequency sweep stopped by user')
                 device.set_frequency(frequency)
                 actual=device.frequency_readback()
                 if not math.isfinite(actual) or abs(actual-frequency)>max(.01,frequency*.001):
                     raise RuntimeError(f'Frequency readback mismatch: requested {frequency}, got {actual} Hz')
                 dwell=max(args.min_dwell_s,min(args.max_dwell_s,args.cycles/frequency))
-                sleeper(dwell)
+                if stop_event is not None and stop_event.wait(dwell):
+                    raise InterruptedError('DG4162 frequency sweep stopped by user')
+                if stop_event is None:
+                    sleeper(dwell)
                 row=dict(index=index,requested_hz=frequency,readback_hz=actual,
                          dwell_s=dwell,elapsed_s=clock()-start,
                          time_utc=datetime.now(timezone.utc).isoformat())
                 writer.writerow(row);output.flush();results.append(row)
+                if on_step is not None:
+                    on_step(row, len(frequencies))
                 print(f"{index+1}/{len(frequencies)}: {frequency:g} Hz, dwell {dwell:.3f} s",flush=True)
         return path
     finally:
