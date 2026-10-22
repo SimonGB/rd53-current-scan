@@ -1182,3 +1182,66 @@ git pull
 python gui.py
 python -m unittest tests.test_dg4162_frequency_sweep tests.test_measurement_modes -v
 ```
+
+
+## Restored GUI layout and VIN-referenced DG4162 transfer analysis
+
+The experimental GUI refactor that **extracted layouts and children from
+the working Qt splitter** has been removed. The original board cards,
+testpoint placement, Pico/Venelin mapping, Hameg scan controls, and
+up/down plots stay intact in their original working arrangement.
+Top-level tabs now switch **whole intact workspaces**:
+
+- **1 · Boards / DC sweeps:** original board/wiring view and Hameg scans.
+- **2 · Rigol frequency response:** generator/Pico acquisition, with
+  scrollable settings beside a large live results plot.
+- **3 · Analysis:** links to existing saved-run viewer and scan comparison.
+
+The Rigol tab takes a **snapshot of the same Pico channel mappings** from
+tab 1 when an acquisition starts. For transfer analysis, map **Vin** and
+**Vout** on the same board to simultaneously acquired PicoScope channels;
+additional voltage channels, e.g. Vref, also appear in the live plot and CSV.
+Board labels are used to keep results separate.
+
+At each frequency, the sweep samples all configured Pico channels and
+fits the **fundamental component** at the DG4162's programmed frequency:
+
+`V(t) = V_DC + A_cos cos(2πft) + A_sin sin(2πft)`.
+
+It calculates the complex transfer ratio `H(f)=Vout_fundamental/Vin_fundamental`,
+saving:
+
+- `<board>_gain_db = 20log10(|H|)`
+- `<board>_attenuation_db = -20log10(|H|)`
+- `<board>_phase_deg = arg(H) × 180/π`, within ±180°.
+- `<board>_vin_fundamental_vpk`, `<board>_vout_fundamental_vpk`
+  and `<board>_transfer_status`.
+
+The GUI plot selector includes **VIN→VOUT attenuation [dB]** and
+**VOUT relative phase [deg]**, alongside mean, peak-to-peak and
+standard deviation. A square-wave stimulus is analyzed at its
+fundamental; harmonics are not included in the transfer estimate.
+
+**Validity rules:** the capture must contain at least 1.5 waveform cycles
+and at least 8 samples per cycle, and Vin must have at least a
+1 mV-peak fundamental. Below a 10 µV-peak output component, phase is
+reported as unavailable. Invalid points retain their ordinary waveform
+statistics and store an explanatory `transfer_status` rather than
+inventing gain/phase. In particular, the default 20 ms capture **cannot
+produce valid phase at 1 Hz**; decrease the frequency range or adjust
+the Pico window/rate to cover enough full periods.
+
+The new attenuation metric is a measured **VIN-to-VOUT voltage transfer**.
+It should not be labeled intrinsic PSRR without confirming the injection
+reference, load, DC operating point, and actual VIN ripple measured on the
+board. Input and output waveforms must be sampled simultaneously with
+correct common grounds. The Hameg is not programmed by this frequency sweep.
+
+Tests:
+```bash
+python -m unittest tests.test_frequency_response \
+  tests.test_dg4162_frequency_sweep tests.test_measurement_modes -v
+```
+
+The GitHub changes were committed but not executed with the physical
+instruments or the user's Linux/Qt GUI.
