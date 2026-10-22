@@ -29,11 +29,17 @@ class TestMeasurementModes(unittest.TestCase):
         window=Window()
         try:
             self.assertEqual(window.mode_select.count(),2)
+            self.assertEqual(window.station_tabs.count(),3)
+            self.assertEqual(window.station_tabs.tabText(0),'1 · Setup boards & testpoints')
+            self.assertEqual(window.station_tabs.tabText(1),'2 · Measurements')
+            self.assertEqual(window.station_tabs.tabText(2),'3 · Results & plots')
             self.assertEqual(window.measure_pages.currentIndex(),0)
             original_mapping=window.profile
             window.mode_select.setCurrentIndex(1)
             self.assertEqual(window.measure_pages.currentIndex(),1)
             self.assertIsNotNone(window.dg4162_page)
+            self.assertTrue(window.dg4162_page.measure.isChecked())
+            self.assertEqual(window.dg_measurement_profile()['backend'],'pico')
             self.assertFalse(window.dg4162_page.enable.isChecked())
             window.mode_select.setCurrentIndex(0)
             self.assertEqual(window.measure_pages.currentIndex(),0)
