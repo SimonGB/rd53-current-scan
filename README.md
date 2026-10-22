@@ -1092,13 +1092,12 @@ Regression: `python -m unittest tests.test_dg4162_frequency_sweep -v`.
 If `ls -l /dev/usbtmc0` prints `crw------- root root`,
 your user cannot open the kernel device. Check `lsusb` and
 `udevadm info -q property -n /dev/usbtmc0` for its IDs; confirm the
-chosen user is a member of `plugdev` (`id -nG`). For a DG4162 that
-actually reports USB VID:PID `1ab1:04b0`, use a narrowly scoped
+chosen user is a member of `plugdev` (`id -nG`). For the observed DG4162 USB VID:PID `1ab1:0641`, use a narrowly scoped
 udev rule:
 
 ```bash
 sudo tee /etc/udev/rules.d/99-rigol-usbtmc.rules >/dev/null <<'EOF'
-SUBSYSTEM=="usbmisc", KERNEL=="usbtmc[0-9]*", ATTRS{idVendor}=="1ab1", ATTRS{idProduct}=="04b0", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usbmisc", KERNEL=="usbtmc[0-9]*", ATTRS{idVendor}=="1ab1", ATTRS{idProduct}=="0641", MODE="0660", GROUP="plugdev"
 EOF
 sudo udevadm control --reload-rules
 # Unplug and reconnect the instrument's USB cable.
