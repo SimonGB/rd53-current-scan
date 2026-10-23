@@ -238,13 +238,14 @@ class Window(QMainWindow):
         # Four-stage workflow: reuse the original board/Hameg splitter as
         # one intact widget. No fragile takeAt()/reparent operations.
         from dg4162_gui import DG4162Page
-        from workflow_pages import InstrumentPage,LiveDashboard
+        from workflow_pages import InstrumentPage,LiveDashboard,MeasurementPage
         self.station_tabs=QTabWidget(self)
         self.dg4162_page=DG4162Page(self,profile_provider=self.dg_measurement_profile)
         self.instruments_page=InstrumentPage(self,self.dg4162_page)
         self.station_tabs.addTab(self.instruments_page,'1 · Instruments')
         self.station_tabs.addTab(root,'2 · Boards & pinning')
-        self.station_tabs.addTab(self.dg4162_page,'3 · Measurements')
+        self.measurements_page=MeasurementPage(self,self.dg4162_page)
+        self.station_tabs.addTab(self.measurements_page,'3 · Measurements')
         self.live_dashboard=LiveDashboard(self)
         live_stop=QPushButton('■ Stop active acquisition')
         live_stop.clicked.connect(self.stop_active_measurement)
