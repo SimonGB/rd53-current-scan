@@ -47,6 +47,13 @@ class TestMeasurementModes(unittest.TestCase):
             self.assertEqual(window.dg4162_page.resource.currentText(),'/dev/usbtmc42')
             window.station_tabs.setCurrentIndex(2)
             self.assertEqual(window.station_tabs.currentIndex(),2)
+            self.assertEqual(window.measurements_page.modes.count(),2)
+            self.assertIs(window.measurements_page.modes.widget(1),
+                          window.dg4162_page)
+            window.measurements_page.dc_panel.fields['start'].setValue(12)
+            self.assertAlmostEqual(window.fields['start'].value(),12)
+            window.fields['start'].setValue(18)
+            self.assertAlmostEqual(window.measurements_page.dc_panel.fields['start'].value(),18)
             self.assertTrue(window.dg4162_page.measure.isChecked())
             self.assertEqual(window.dg_measurement_profile()['backend'],'pico')
             self.assertIn('attenuation',window.dg4162_page.plot_quantity.itemText(3).lower())
@@ -58,6 +65,39 @@ class TestMeasurementModes(unittest.TestCase):
             self.assertIs(window.figure,original_figure)
         finally:
             window.close()
+
+    def test_rigol_plot_and_settling_notifications_do_not_crash(self):
+        from dg4162_gui import DG4162Page
+        page=DG4162Page()
+        try:
+            page.on_step_started(0,25,1.0,20.0)
+            self.assertIn('SETTLING',page.status_label.text())
+            page.on_progress({'index':0,'readback_hz':1.0,'dwell_s':20.,
+                              'board1_Vin_mean_v':1.1,
+                              'board1_Vout_mean_v':1.8,
+                              'board1_attenuation_db':20.0},25)
+            self.assertEqual(page.run_progress.value(),4)
+            self.assertEqual(len(page.live_points),1)
+            page.plot_quantity.setCurrentIndex(3)
+            self.assertIn('MEASURING',page.status_label.text())
+        finally:
+            page.close()
+
+    def test_dashboard_start_of_step_is_not_a_completed_point(self):
+        from workflow_pages import LiveDashboard
+        page=LiveDashboard()
+        try:
+            page.start_dg()
+            page.update_dg({'_phase':'settling','index':0,
+                            'readback_hz':1.0,'dwell_s':20.0},25)
+            self.assertEqual(page.dg_rows,[])
+            self.assertIn('settling',page.status.text())
+            page.update_dg({'index':0,'readback_hz':1.0,'dwell_s':20.0,
+                            'board1_Vin_mean_v':1.1},25)
+            self.assertEqual(len(page.dg_rows),1)
+            self.assertEqual(page.progress.value(),4)
+        finally:
+            page.close()
 
 
 if __name__=='__main__':
