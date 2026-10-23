@@ -718,6 +718,10 @@ class Window(QMainWindow):
             self.reset_eta()
 
     def start(self):
+        if hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
+            QMessageBox.warning(self,'Rigol sweep active',
+                                'Stop the Rigol frequency sweep before starting a Hameg scan.')
+            return
         if self.running or getattr(self,'abort_dialog',None):return
         try:
             p=validate_profile(active_profile(self.snapshot()))
