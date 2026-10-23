@@ -100,7 +100,7 @@ class DG4162Page(QWidget):
         self.resource=QComboBox()
         self.resource.setEditable(True)
         self.resource.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.resource.setMinimumWidth(380)
+        self.resource.setMinimumWidth(220)
         if Path('/dev/usbtmc0').exists():
             self.resource.addItem('/dev/usbtmc0')
         form.addRow('VISA resource',self.resource)
@@ -161,7 +161,7 @@ class DG4162Page(QWidget):
         self.require_transfer=QCheckBox('Require mapped Vin and Vout for gain / phase')
         self.require_transfer.setChecked(profile_provider is not None)
         opts.addRow(self.require_transfer)
-        self.mapping_status=QLabel('Configure the PicoScope channels in Setup tab')
+        self.mapping_status=QLabel('Assign PicoScope channels in 2 · Boards & pinning')
         self.mapping_status.setWordWrap(True)
         opts.addRow(self.mapping_status)
         self.capture_window=QDoubleSpinBox()
@@ -283,6 +283,9 @@ class DG4162Page(QWidget):
         if self.worker and self.worker.isRunning():
             return
         try:
+            station=getattr(self.profile_provider,'__self__',None)
+            if station is not None and getattr(station,'running',False):
+                raise ValueError('A Hameg scan is already active. Stop it before enabling the Rigol.')
             args=self.collect()
             validate(args)
             if args.enable_output and self.measure.isChecked():
