@@ -1245,3 +1245,60 @@ python -m unittest tests.test_frequency_response \
 
 The GitHub changes were committed but not executed with the physical
 instruments or the user's Linux/Qt GUI.
+
+
+## GUI workflow (October 2026 usability and crash fixes)
+
+**Latest interface (overrides earlier tab-layout descriptions in this
+historical README):** `python gui.py` now has five workflow tabs:
+
+1. **Instruments** — common connections: Hameg device/channel,
+   PicoScope or Venelin backend, Rigol USBTMC/VISA resource and ID check.
+   These inputs synchronize with the existing scan controls.
+2. **Boards & pinning** — preserves the *original* board editor and Hameg
+   scan layout intact: board cards, photo/marker coordinates, per-channel
+   probe/range and input mapping, profile load/save.
+3. **Measurements** — choose **Hameg current/voltage line regulation**
+   or **Rigol frequency response**. A new DC panel mirrors the existing
+   scan form (without duplicating underlying settings).
+4. **Live output** — automatically opens on Start; shows an active mode,
+   plotted testpoint data, point index, **percentage completion**, a Stop
+   button and a compact run log. During Rigol settling, the current
+   frequency and remaining hold time are updated periodically instead
+   of showing an apparently frozen window.
+5. **Analysis** — saved-run viewer and the existing comparison tooling.
+
+Known user-reported problems addressed:
+- The Rigol live plot previously crashed with `NameError: math not
+  defined`. The missing import is fixed, and plotting errors are now
+  caught in the UI slot rather than escaping into Qt.
+- A gain/phase test erroneously used the default **Vref(A), Vout(B)**
+  profile while expecting **Vin(A), Vout(B)**. The test now explicitly
+  defines its physical `Vin` testpoint; the default wiring is not
+  silently relabeled.
+- Gain/phase on physical hardware requires correctly mapped **Vin and
+  Vout on the same board**. The Rigol UI clearly validates the mapping
+  before arming. Uncheck the transfer requirement if only voltage
+  statistics are desired.
+- The live-frequency GUI defaults to a **100 Hz** start, instead of 1 Hz,
+  as its default 20 ms Pico capture includes only 2% of a 1 Hz period.
+  The CLI still supports arbitrary frequencies when explicitly set.
+  With transfer mode enabled, the GUI blocks a sweep if the capture
+  spans <1.5 periods at the start frequency, giving an actionable
+  message about Pico capture time/sample-rate settings.
+
+No changes to the Hameg source output are performed by the DG4162
+sweep; the function generator continues to modulate the externally
+verified current-injection board. Scope BNC grounds share a reference.
+
+Before testing hardware, check the regression suite:
+```bash
+python -m unittest tests.test_frequency_response \
+  tests.test_dg4162_frequency_sweep tests.test_measurement_modes -v
+python gui.py
+```
+
+These GUI changes have not been validated on the user's physical
+Ubuntu/PicoScope/Rigol station yet. If a modal/Qt error occurs, retain
+the full terminal traceback and take the generator output to OFF before
+further debugging.
