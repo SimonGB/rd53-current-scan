@@ -235,16 +235,24 @@ class Window(QMainWindow):
         for box in self.fields.values():box.valueChanged.connect(self.reset_eta)
         self.captures.valueChanged.connect(self.reset_eta);self.reverse.toggled.connect(self.reset_eta);self.sim.toggled.connect(self.reset_eta)
         self.update_eta()
-        # Keep the original, proven splitter intact. The board editor,
-        # scan controls and live plots are never removed or reparented.
+        # Four-stage workflow: reuse the original board/Hameg splitter as
+        # one intact widget. No fragile takeAt()/reparent operations.
         from dg4162_gui import DG4162Page
+        from workflow_pages import InstrumentPage,LiveDashboard
         self.station_tabs=QTabWidget(self)
-        self.station_tabs.addTab(root, '1 · Boards / DC sweeps')
-        self.dg4162_page=DG4162Page(self, profile_provider=self.dg_measurement_profile)
-        self.station_tabs.addTab(self.dg4162_page,'2 · Rigol frequency response')
+        self.dg4162_page=DG4162Page(self,profile_provider=self.dg_measurement_profile)
+        self.instruments_page=InstrumentPage(self,self.dg4162_page)
+        self.station_tabs.addTab(self.instruments_page,'1 · Instruments')
+        self.station_tabs.addTab(root,'2 · Boards & pinning')
+        self.station_tabs.addTab(self.dg4162_page,'3 · Measurements')
+        self.live_dashboard=LiveDashboard(self)
+        live_stop=QPushButton('■ Stop active acquisition')
+        live_stop.clicked.connect(self.stop_active_measurement)
+        self.live_dashboard.layout().insertWidget(1,live_stop)
+        self.station_tabs.addTab(self.live_dashboard,'4 · Live output')
         analysis=QWidget(self)
         analysis_layout=QVBoxLayout(analysis)
-        analysis_layout.addWidget(QLabel('Saved measurements and analysis'))
+        analysis_layout.addWidget(QLabel('5  ·  Saved measurements and analysis'))
         history_button=QPushButton('Open saved measurements…')
         history_button.clicked.connect(self.open_history)
         analysis_layout.addWidget(history_button)
@@ -252,17 +260,23 @@ class Window(QMainWindow):
         compare_button.clicked.connect(self.open_rext_compare)
         analysis_layout.addWidget(compare_button)
         analysis_layout.addStretch()
-        self.station_tabs.addTab(analysis,'3 · Analysis')
+        self.station_tabs.addTab(analysis,'5 · Analysis')
         self.setCentralWidget(self.station_tabs)
         self.station_tabs.currentChanged.connect(self.change_measurement_mode)
-        self.measure_menu=self.menuBar().addMenu('Measurements')
-        for index,title in enumerate(('Boards and DC sweeps',
-                                      'Rigol frequency response','Analysis')):
-            self.measure_menu.addAction(title,
-                                        lambda checked=False,i=index:
-                                        self.station_tabs.setCurrentIndex(i))
+        self.dg4162_page.acquisition_started.connect(self.begin_rigol_live)
+        self.dg4162_page.point_updated.connect(self.live_dashboard.update_dg)
+        self.dg4162_page.acquisition_finished.connect(self.finish_rigol_live)
+        self._previous_station_tab=0
+        self.measure_menu=self.menuBar().addMenu('Workflow')
+        for index,title in enumerate((
+                '1  Instruments','2  Boards and pinning',
+                '3  Measurement procedures','4  Live output',
+                '5  Saved results / analysis')):
+            self.measure_menu.addAction(
+                title,lambda checked=False,i=index:
+                self.station_tabs.setCurrentIndex(i))
         self.measure_menu.addSeparator()
-        for title in ('Startup sequences (CLI)', 'Load regulation (planned)'):
+        for title in ('Startup sequences (CLI)','Load regulation (planned)'):
             action=self.measure_menu.addAction(title)
             action.setEnabled(False)
         self.setStyleSheet(self.styleSheet()+'''QMainWindow,QWidget {background:#0c1825;color:#d8e5f2;font-size:12px;}
@@ -724,6 +738,8 @@ class Window(QMainWindow):
             self.table.setEnabled(False);self.backend.setEnabled(False);self.sweep_mode.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
             self.state.setText('SIMULATING' if args.simulate else 'MEASURING');self.log.appendPlainText(json.dumps(p,indent=2))
             self.worker=Worker(args,p);self.worker.point.connect(self.point);self.worker.done.connect(self.finished);self.worker.start()
+            self.live_dashboard.start_dc()
+            self.station_tabs.setCurrentIndex(3)
         except Exception as e:QMessageBox.warning(self,'Cannot start',str(e))
     def notes_changed(self):
         if self.running and self.worker:
@@ -756,6 +772,7 @@ class Window(QMainWindow):
         save.clicked.connect(store_reason);dialog.setModal(True);dialog.show()
     def point(self,batch):
         self.rows.extend(batch);self.progress.setValue(self.progress.value()+1)
+        self.live_dashboard.update_dc(self.rows,self.progress.value(),self.progress.maximum())
         if self.clock:self.clock.point(time.monotonic())
         self.overview.readings(batch);self.update_eta()
         text=' | '.join(f"{r['board']} {r['testpoint']}: {r['mean']:.5f} {r['unit']} · σ={r['sample_std']:.5g}" for r in batch)
@@ -767,6 +784,7 @@ class Window(QMainWindow):
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
         self.estimate_state='done' if ok else 'stopped';self.update_eta();self.sync_overview()
         self.readout.setText(text);self.readout.setToolTip(text)
+        self.live_dashboard.finished(text,ok)
     def plot_axis_mode(self, rows=None):
         """Use the acquisition's recorded mode, not a later mode-selector edit."""
         rows=self.rows if rows is None else rows
@@ -859,21 +877,34 @@ class Window(QMainWindow):
 
     def change_measurement_mode(self,index):
         previous=getattr(self,'_previous_station_tab',0)
-        if index==1 and self.running:
-            QMessageBox.information(self,'Hameg scan running',
-                                    'Finish the Hameg scan before starting a Rigol acquisition.')
+        # Live results remain accessible during acquisition. Block entering
+        # the other instrument's control panel during a running experiment.
+        if (index==2 and self.running) or (index==1 and self.dg4162_page.is_running()):
             self.station_tabs.blockSignals(True)
             self.station_tabs.setCurrentIndex(previous)
             self.station_tabs.blockSignals(False)
-            return
-        if index==0 and self.dg4162_page.is_running():
-            QMessageBox.information(self,'Generator sweep running',
-                                    'Stop the Rigol acquisition before switching to DC scans.')
-            self.station_tabs.blockSignals(True)
-            self.station_tabs.setCurrentIndex(previous)
-            self.station_tabs.blockSignals(False)
+            self.live_dashboard.notes.appendPlainText(
+                'Finish the active instrument run before changing measurement controls.')
             return
         self._previous_station_tab=index
+
+    def begin_rigol_live(self):
+        self.boardtabs.setEnabled(False)
+        self.backend.setEnabled(False)
+        self.live_dashboard.dg_spacing=self.dg4162_page.spacing.currentText()
+        self.live_dashboard.start_dg()
+        self.station_tabs.setCurrentIndex(3)
+
+    def finish_rigol_live(self,message,success):
+        self.live_dashboard.finished(message,success)
+        self.boardtabs.setEnabled(True)
+        self.backend.setEnabled(True)
+
+    def stop_active_measurement(self):
+        if self.dg4162_page.is_running():
+            self.dg4162_page.stop_run()
+        elif self.running:
+            self.stop()
 
     def closeEvent(self,event):
         if hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
