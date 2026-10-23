@@ -20,6 +20,7 @@ from dg4162_frequency_sweep import run, validate, frequency_points, make_parser
 
 class DGWorker(QThread):
     progress = pyqtSignal(object, int)
+    step_started = pyqtSignal(int,int,float,float)
     completed = pyqtSignal(str, bool)
 
     def __init__(self, args, profile=None):
@@ -31,7 +32,8 @@ class DGWorker(QThread):
     def run(self):
         try:
             result = run(self.args, stop_event=self.cancel, on_step=self.progress.emit,
-                         profile=self.profile)
+                         profile=self.profile,
+                         on_step_begin=self.step_started.emit)
             self.completed.emit(str(result), True)
         except BaseException as error:
             self.completed.emit(f'{type(error).__name__}: {error}', False)
@@ -310,6 +312,7 @@ class DG4162Page(QWidget):
                                  'Checking resource and previewing sweep (output unchanged)…')
         self.worker=DGWorker(args,profile)
         self.worker.progress.connect(self.on_progress)
+        self.worker.step_started.connect(self.on_step_started)
         self.worker.completed.connect(self.on_completed)
         self.start.setEnabled(False)
         self.stop.setEnabled(True)
@@ -348,9 +351,21 @@ class DG4162Page(QWidget):
         ax.grid(alpha=.3)
         self.canvas.draw_idle()
 
+    def on_step_started(self,index,total,frequency,dwell):
+        self.status_label.setText(
+            f"SETTLING · {index+1}/{total} · {frequency:.5g} Hz · "
+            f"hold {dwell:.1f} s")
+        self.run_progress.setValue(round(100*index/max(1,total)))
+        self.point_updated.emit({
+            '_phase':'settling','index':index,'readback_hz':frequency,
+            'dwell_s':dwell},total)
+
     def on_progress(self,row,total):
         self.live_points.append(row)
-        self.redraw_live()
+        try:
+            self.redraw_live()
+        except Exception as error:
+            self.log.appendPlainText('Plot warning: '+str(error))
         self.progress.setRange(0,total)
         self.progress.setValue(row['index']+1)
         self.run_progress.setValue(round(100*(row['index']+1)/total))
