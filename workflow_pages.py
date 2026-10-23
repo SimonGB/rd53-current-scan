@@ -134,6 +134,10 @@ class LiveDashboard(QWidget):
         self.dg_canvas.draw_idle()
         self.mode_tabs.setCurrentIndex(0)
 
+    def tick_dg(self,percent,label):
+        self.progress.setValue(percent)
+        self.status.setText(label)
+
     def start_dg(self):
         self.clear_dg()
         self.status.setText('DG4162 · connecting to instruments')
