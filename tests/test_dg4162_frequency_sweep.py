@@ -245,8 +245,13 @@ class DG4162Tests(unittest.TestCase):
             args=make_args('--enable-output','--confirm-safe-interface',
                 '--amplitude-vpp','0.2','--start-hz','100','--stop-hz','1000',
                 '--points','3','--output',folder)
+            profile=default_profile()
+            # The shared default wiring is Vref(A), Vout(B); this
+            # *specific transfer test* intentionally measures Vin(A).
+            profile['boards'][0]['testpoints'][0]['name']='Vin'
+            profile['mappings'][0]['testpoint']='Vin'
             path=run(args,manager=FakeManager(rigol),
-                     sleeper=lambda dt:None,profile=default_profile(),
+                     sleeper=lambda dt:None,profile=profile,
                      reader=SyntheticPico(rigol))
             with (path/'frequency_steps.csv').open() as handle:
                 rows=list(csv.DictReader(handle))
