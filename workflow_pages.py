@@ -140,6 +140,13 @@ class LiveDashboard(QWidget):
 
     def update_dg(self,row,total):
         try:
+            if row.get('_phase')=='settling':
+                self.mode_tabs.setCurrentIndex(0)
+                self.status.setText(
+                    f"DG4162 · settling {row['index']+1}/{total} · "
+                    f"{row['readback_hz']:.5g} Hz · hold {row['dwell_s']:.1f} s")
+                self.progress.setValue(round(100*row['index']/total))
+                return
             self.dg_rows.append(row)
             self.progress.setValue(round(100*(row['index']+1)/total))
             self.status.setText(f"DG4162 · point {row['index']+1}/{total} · "
