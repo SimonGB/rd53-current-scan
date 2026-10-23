@@ -38,7 +38,10 @@ class DGWorker(QThread):
 
 
 class DG4162Page(QWidget):
-    """Dedicated sweep mode. No output is enabled unless explicitly checked."""
+    """Rigol sweep settings and response plots with cross-tab progress."""
+    point_updated=pyqtSignal(object,int)
+    acquisition_started=pyqtSignal()
+    acquisition_finished=pyqtSignal(str,bool)
     def __init__(self, parent=None, profile_provider=None):
         super().__init__(parent)
         self.worker = None
@@ -55,6 +58,15 @@ class DG4162Page(QWidget):
             'ground references before enabling output.')
         warning.setWordWrap(True)
         layout.addWidget(warning)
+        fixed=QHBoxLayout()
+        self.status_label=QLabel('READY · no acquisition')
+        self.run_progress=QProgressBar()
+        self.run_progress.setRange(0,100)
+        self.run_progress.setValue(0)
+        self.run_progress.setFormat('%p%')
+        fixed.addWidget(self.status_label,1)
+        fixed.addWidget(self.run_progress,2)
+        layout.addLayout(fixed)
         splitter=QSplitter(Qt.Orientation.Horizontal)
         settings_scroll=QScrollArea()
         settings_scroll.setWidgetResizable(True)
@@ -291,6 +303,8 @@ class DG4162Page(QWidget):
         self.canvas.draw_idle()
         self.progress.setRange(0,args.points if not args.identify else 1)
         self.progress.setValue(0)
+        self.run_progress.setValue(0)
+        self.status_label.setText('CONNECTING · Rigol and PicoScope')
         self.log.appendPlainText('Identifying DG4162…' if args.identify else
                                  'Starting DG4162 frequency sweep…' if args.enable_output else
                                  'Checking resource and previewing sweep (output unchanged)…')
@@ -300,6 +314,7 @@ class DG4162Page(QWidget):
         self.start.setEnabled(False)
         self.stop.setEnabled(True)
         self.worker.start()
+        self.acquisition_started.emit()
 
     def redraw_live(self, *unused):
         if not self.live_points:
@@ -338,6 +353,11 @@ class DG4162Page(QWidget):
         self.redraw_live()
         self.progress.setRange(0,total)
         self.progress.setValue(row['index']+1)
+        self.run_progress.setValue(round(100*(row['index']+1)/total))
+        self.status_label.setText(
+            f"MEASURING · {row['index']+1}/{total} · "
+            f"{row['readback_hz']:.4g} Hz")
+        self.point_updated.emit(row,total)
         values=[f"{k[:-7]}={v:.4g} V" for k,v in row.items()
                 if k.endswith('_mean_v') and isinstance(v,(int,float))]
         quality=[f"{key[:-16]}: {value}" for key,value in row.items()
@@ -352,6 +372,8 @@ class DG4162Page(QWidget):
             (' · ' + ' · '.join(quality) if quality else ''))
 
     def on_completed(self,text,success):
+        self.status_label.setText('COMPLETE' if success else 'STOPPED / ERROR')
+        self.acquisition_finished.emit(text,success)
         self.log.appendPlainText(('Completed: ' if success else 'Stopped/error: ')+text)
         self.start.setEnabled(True)
         self.stop.setEnabled(False)
@@ -363,6 +385,7 @@ class DG4162Page(QWidget):
         if self.worker and self.worker.isRunning():
             self.worker.cancel.set()
             self.log.appendPlainText('Stop requested; generator output will be disabled.')
+            self.status_label.setText('STOPPING · disabling generator output')
             self.stop.setEnabled(False)
 
     def is_running(self):
