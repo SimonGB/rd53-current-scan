@@ -266,6 +266,7 @@ class Window(QMainWindow):
         self.station_tabs.currentChanged.connect(self.change_measurement_mode)
         self.dg4162_page.acquisition_started.connect(self.begin_rigol_live)
         self.dg4162_page.point_updated.connect(self.live_dashboard.update_dg)
+        self.dg4162_page.acquisition_tick.connect(self.live_dashboard.tick_dg)
         self.dg4162_page.acquisition_finished.connect(self.finish_rigol_live)
         self._previous_station_tab=0
         self.measure_menu=self.menuBar().addMenu('Workflow')
