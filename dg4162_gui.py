@@ -10,7 +10,7 @@ import time
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from PyQt6.QtWidgets import (
     QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QGroupBox,QLineEdit,QComboBox,
     QDoubleSpinBox,QSpinBox,QPushButton,QLabel,QCheckBox,QPlainTextEdit,
