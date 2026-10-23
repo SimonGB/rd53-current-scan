@@ -235,7 +235,8 @@ def validate(args):
 
 
 def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
-        stop_event=None, on_step=None, profile=None, reader=None):
+        stop_event=None, on_step=None, profile=None, reader=None,
+        on_step_begin=None):
     """Run stepped generator sweep, optionally capturing mapped Pico voltages.
 
     Passing profile enables synchronous measurements at each frequency.
@@ -312,6 +313,8 @@ def run(args, manager=None, clock=time.monotonic, sleeper=time.sleep,
                 if not math.isfinite(actual) or abs(actual-frequency)>max(.01,frequency*.001):
                     raise RuntimeError(f'Frequency readback mismatch: requested {frequency}, got {actual} Hz')
                 dwell=max(args.min_dwell_s,min(args.max_dwell_s,args.cycles/frequency))
+                if on_step_begin is not None:
+                    on_step_begin(index, len(frequencies), float(actual), dwell)
                 if stop_event is not None and stop_event.wait(dwell):
                     raise InterruptedError('DG4162 frequency sweep stopped by user')
                 if stop_event is None:
