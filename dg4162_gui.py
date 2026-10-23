@@ -317,7 +317,8 @@ class DG4162Page(QWidget):
         self.start.setEnabled(False)
         self.stop.setEnabled(True)
         self.worker.start()
-        self.acquisition_started.emit()
+        if args.enable_output:
+            self.acquisition_started.emit()
 
     def redraw_live(self, *unused):
         if not self.live_points:
@@ -388,7 +389,8 @@ class DG4162Page(QWidget):
 
     def on_completed(self,text,success):
         self.status_label.setText('COMPLETE' if success else 'STOPPED / ERROR')
-        self.acquisition_finished.emit(text,success)
+        if self.worker is not None and self.worker.args.enable_output:
+            self.acquisition_finished.emit(text,success)
         self.log.appendPlainText(('Completed: ' if success else 'Stopped/error: ')+text)
         self.start.setEnabled(True)
         self.stop.setEnabled(False)
