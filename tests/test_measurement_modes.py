@@ -99,6 +99,22 @@ class TestMeasurementModes(unittest.TestCase):
         finally:
             page.close()
 
+    def test_rigol_gain_requires_real_vin_mapping(self):
+        from dg4162_gui import DG4162Page
+        from mapping import default_profile
+        page=DG4162Page(profile_provider=default_profile)
+        try:
+            self.assertTrue(page.require_transfer.isChecked())
+            with self.assertRaisesRegex(ValueError,'mapped Vin AND Vout'):
+                page.resolve_profile()
+            page.require_transfer.setChecked(False)
+            profile=page.resolve_profile()
+            self.assertEqual(profile['backend'],'pico')
+            # The default mapping must not be silently relabeled.
+            self.assertEqual(profile['mappings'][0]['testpoint'],'Vref')
+        finally:
+            page.close()
+
 
 if __name__=='__main__':
     unittest.main()
