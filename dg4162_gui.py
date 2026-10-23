@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 import threading
 import math
+import time
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -44,11 +45,20 @@ class DG4162Page(QWidget):
     point_updated=pyqtSignal(object,int)
     acquisition_started=pyqtSignal()
     acquisition_finished=pyqtSignal(str,bool)
+    acquisition_tick=pyqtSignal(int,str)
     def __init__(self, parent=None, profile_provider=None):
         super().__init__(parent)
         self.worker = None
         self.profile_provider=profile_provider
         self.live_points=[]
+        self._dwell_started=None
+        self._dwell_seconds=0.0
+        self._dwell_index=0
+        self._dwell_total=1
+        self._dwell_frequency=0.0
+        self.tick_timer=QTimer(self)
+        self.tick_timer.setInterval(250)
+        self.tick_timer.timeout.connect(self.update_ticking)
         layout=QVBoxLayout(self)
         header=QLabel('DG4162 · Frequency response / stimulus')
         header.setStyleSheet('font-size:20px;font-weight:bold')
@@ -112,7 +122,7 @@ class DG4162Page(QWidget):
 
         self.numeric={}
         for key,title,val,minvalue,maxvalue,decimals in [
-            ('start_hz','Start frequency [Hz]',1,0.001,50e6,3),
+            ('start_hz','Start frequency [Hz]',100,0.001,50e6,3),
             ('stop_hz','Stop frequency [Hz]',10000,0.001,50e6,3),
             ('amplitude_vpp','High-Z calibrated amplitude [Vpp]',0.2,0.001,2,4),
             ('offset_v','DC offset [V]',0,-2,2,4),
@@ -148,6 +158,9 @@ class DG4162Page(QWidget):
         self.measure=QCheckBox('Capture PicoScope voltages using shared Setup mappings')
         self.measure.setChecked(profile_provider is not None)
         opts.addRow(self.measure)
+        self.require_transfer=QCheckBox('Require mapped Vin and Vout for gain / phase')
+        self.require_transfer.setChecked(profile_provider is not None)
+        opts.addRow(self.require_transfer)
         self.mapping_status=QLabel('Configure the PicoScope channels in Setup tab')
         self.mapping_status.setWordWrap(True)
         opts.addRow(self.mapping_status)
@@ -294,6 +307,17 @@ class DG4162Page(QWidget):
         profile=validate_profile(self.profile_provider())
         if profile['backend'] != 'pico':
             raise ValueError('Select Pico as the measurement source in Setup')
+        pairs={}
+        for entry in profile['mappings']:
+            pairs.setdefault(entry['board'],set()).add(
+                entry['testpoint'].lower().replace('_',''))
+        if self.require_transfer.isChecked() and not any(
+                {'vin','vout'}.issubset(found) for found in pairs.values()):
+            raise ValueError(
+                'Gain/phase needs mapped Vin AND Vout on the same board. '
+                'In 2 · Boards & pinning, assign the physical Vin and Vout '
+                'channels (the default profile maps Vref, not Vin). '
+                'Or uncheck Require Vin/Vout to record waveform statistics.')
         self.mapping_status.setText('Measuring: ' + ', '.join(
             f"{m['board']}/{m['testpoint']} → {m['channel']}" for m in profile['mappings']))
         return profile
@@ -305,6 +329,7 @@ class DG4162Page(QWidget):
         self.canvas.draw_idle()
         self.progress.setRange(0,args.points if not args.identify else 1)
         self.progress.setValue(0)
+        self.tick_timer.stop()
         self.run_progress.setValue(0)
         self.status_label.setText('CONNECTING · Rigol and PicoScope')
         self.log.appendPlainText('Identifying DG4162…' if args.identify else
@@ -353,6 +378,12 @@ class DG4162Page(QWidget):
         self.canvas.draw_idle()
 
     def on_step_started(self,index,total,frequency,dwell):
+        self._dwell_started=time.monotonic()
+        self._dwell_seconds=dwell
+        self._dwell_index=index
+        self._dwell_total=total
+        self._dwell_frequency=frequency
+        self.tick_timer.start()
         self.status_label.setText(
             f"SETTLING · {index+1}/{total} · {frequency:.5g} Hz · "
             f"hold {dwell:.1f} s")
@@ -361,7 +392,21 @@ class DG4162Page(QWidget):
             '_phase':'settling','index':index,'readback_hz':frequency,
             'dwell_s':dwell},total)
 
+    def update_ticking(self):
+        if self._dwell_started is None:
+            return
+        elapsed=max(0.0,time.monotonic()-self._dwell_started)
+        fraction=min(0.95,elapsed/max(self._dwell_seconds,1e-6))
+        percent=round(100*(self._dwell_index+fraction)/self._dwell_total)
+        left=max(0.0,self._dwell_seconds-elapsed)
+        label=(f"SETTLING · {self._dwell_index+1}/{self._dwell_total}"
+               f" · {self._dwell_frequency:.5g} Hz · {left:.1f} s to capture")
+        self.run_progress.setValue(percent)
+        self.status_label.setText(label)
+        self.acquisition_tick.emit(percent,label)
+
     def on_progress(self,row,total):
+        self.tick_timer.stop()
         self.live_points.append(row)
         try:
             self.redraw_live()
@@ -388,6 +433,7 @@ class DG4162Page(QWidget):
             (' · ' + ' · '.join(quality) if quality else ''))
 
     def on_completed(self,text,success):
+        self.tick_timer.stop()
         self.status_label.setText('COMPLETE' if success else 'STOPPED / ERROR')
         if self.worker is not None and self.worker.args.enable_output:
             self.acquisition_finished.emit(text,success)
