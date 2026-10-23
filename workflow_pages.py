@@ -8,7 +8,8 @@ from __future__ import annotations
 import math
 from PyQt6.QtWidgets import (
     QWidget,QVBoxLayout,QFormLayout,QGroupBox,QHBoxLayout,QLabel,QPushButton,
-    QComboBox,QLineEdit,QSpinBox,QProgressBar,QPlainTextEdit,QTabWidget,
+    QComboBox,QLineEdit,QSpinBox,QDoubleSpinBox,QCheckBox,QScrollArea,
+    QProgressBar,QPlainTextEdit,QTabWidget,
 )
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -221,3 +222,107 @@ class LiveDashboard(QWidget):
     def finished(self,text,success):
         self.status.setText('COMPLETE' if success else 'STOPPED / ERROR')
         self.notes.appendPlainText(text)
+
+
+class DCScanPanel(QWidget):
+    """Mirror the existing Hameg scan form without removing its widgets."""
+    def __init__(self,station):
+        super().__init__(station)
+        self.station=station
+        layout=QVBoxLayout(self)
+        title=QLabel('Hameg · DC line/current regulation')
+        title.setStyleSheet('font-size:19px;font-weight:700')
+        layout.addWidget(title)
+        desc=QLabel('Sweep the input current or voltage while capturing mapped '
+                    'testpoints with the selected PicoScope/Venelin backend. '
+                    'Uses the instrument connections and board mappings from steps 1–2.')
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        controls=QGroupBox('Sweep settings')
+        form=QFormLayout(controls)
+        self.mode=QComboBox()
+        self.mode.addItems(['Current','Voltage'])
+        self.mode.setCurrentText(station.sweep_mode.currentText())
+        self.mode.currentTextChanged.connect(station.sweep_mode.setCurrentText)
+        station.sweep_mode.currentTextChanged.connect(self.mode.setCurrentText)
+        form.addRow('Control variable',self.mode)
+        self.fields={}
+        names=[
+            ('start','Start setpoint (mA in Current, V in Voltage)'),
+            ('stop','Stop setpoint (mA in Current, V in Voltage)'),
+            ('step','Step size (mA in Current, V in Voltage)'),
+            ('max_current','Maximum supply current [mA]'),
+            ('voltage_limit','Compliance limit [V]'),
+            ('settle','Settling time per point [s]'),
+            ('capture_time','Pico capture window [s]'),
+            ('sample_rate','Pico sample rate [S/s]')]
+        for key,label in names:
+            source=station.fields[key]
+            target=QDoubleSpinBox()
+            target.setRange(source.minimum(),source.maximum())
+            target.setDecimals(source.decimals())
+            target.setValue(source.value())
+            target.valueChanged.connect(source.setValue)
+            source.valueChanged.connect(target.setValue)
+            form.addRow(label,target)
+            self.fields[key]=target
+        self.captures=QSpinBox()
+        self.captures.setRange(station.captures.minimum(),station.captures.maximum())
+        self.captures.setValue(station.captures.value())
+        self.captures.valueChanged.connect(station.captures.setValue)
+        station.captures.valueChanged.connect(self.captures.setValue)
+        form.addRow('Captures per point',self.captures)
+        self.reverse=QCheckBox('Include downward sweep')
+        self.reverse.setChecked(station.reverse.isChecked())
+        self.reverse.toggled.connect(station.reverse.setChecked)
+        station.reverse.toggled.connect(self.reverse.setChecked)
+        form.addRow(self.reverse)
+        self.simulate=QCheckBox('Simulate (no hardware)')
+        self.simulate.setChecked(station.sim.isChecked())
+        self.simulate.toggled.connect(station.sim.setChecked)
+        station.sim.toggled.connect(self.simulate.setChecked)
+        form.addRow(self.simulate)
+        self.verified=QCheckBox('I have verified supply limits and physical wiring')
+        self.verified.setChecked(station.verified.isChecked())
+        self.verified.toggled.connect(station.verified.setChecked)
+        station.verified.toggled.connect(self.verified.setChecked)
+        form.addRow(self.verified)
+        layout.addWidget(controls)
+        buttons=QHBoxLayout()
+        self.start=QPushButton('▶ Start DC scan')
+        self.start.clicked.connect(station.start)
+        self.stop=QPushButton('■ Stop DC scan')
+        self.stop.clicked.connect(station.stop)
+        buttons.addWidget(self.start)
+        buttons.addWidget(self.stop)
+        layout.addLayout(buttons)
+        hint=QLabel('Live traces and completion percentage appear automatically '
+                    'under 4 · Live output. Existing saved-plot and comparison '
+                    'features remain available.')
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch()
+
+
+class MeasurementPage(QWidget):
+    """One place for choosing and configuring each acquisition mode."""
+    def __init__(self,station,rigol):
+        super().__init__(station)
+        layout=QVBoxLayout(self)
+        heading=QLabel('3  ·  Choose a measurement')
+        heading.setStyleSheet('font-size:22px;font-weight:700')
+        layout.addWidget(heading)
+        note=QLabel('Instrument settings and physical channel assignments stay '
+                    'shared across all measurements. Choose a procedure below; '
+                    'Start automatically opens the live dashboard.')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        self.modes=QTabWidget()
+        dc=DCScanPanel(station)
+        self.dc_panel=dc
+        dc_scroll=QScrollArea()
+        dc_scroll.setWidgetResizable(True)
+        dc_scroll.setWidget(dc)
+        self.modes.addTab(dc_scroll,'Hameg · Current / line regulation')
+        self.modes.addTab(rigol,'Rigol · Frequency response')
+        layout.addWidget(self.modes,1)
