@@ -285,6 +285,17 @@ class DG4162Page(QWidget):
         try:
             args=self.collect()
             validate(args)
+            if args.enable_output and self.measure.isChecked():
+                # Check physical testpoint roles before changing generator output.
+                self.resolve_profile()
+                cycles=args.pico_capture_time*args.start_hz
+                if cycles < 1.5 and self.require_transfer.isChecked():
+                    raise ValueError(
+                        f'Pico captures only {cycles:.2f} waveform cycles at '
+                        f'{args.start_hz:g} Hz. For phase/gain, configure '
+                        f'at least {1.5/args.start_hz:.3g} seconds per capture '
+                        '(preferably >= 3 cycles), or increase start frequency. '
+                        'Keep sample count within the two-million limit.')
             if args.enable_output:
                 answer=QMessageBox.question(
                     self,'Enable waveform output?',
