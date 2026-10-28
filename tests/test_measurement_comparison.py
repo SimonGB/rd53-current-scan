@@ -19,6 +19,20 @@ class ComparisonTests(unittest.TestCase):
             a=load_measurement(p/'first');b=load_measurement(p/'second');compatible([a],b)
             figure=Figure();draw_comparison(figure,[a,b]);self.assertEqual(len(figure.axes[0].lines),2)
             np.testing.assert_allclose(figure.axes[0].lines[0].get_ydata(),[1,1]);self.assertEqual((p/'first'/'measurements.csv').read_bytes(),original)
+    def test_custom_legend_title_and_duplicate_labels(self):
+        from measurement_comparison import legend_label,validate_legend_template
+        run={'kind':'startup','label':'GSI board','xlabel':'Time [ms]'}
+        series=dict(board='board1',signal='Vin',unit='V',direction='',detail='original',voltage=2.,current_ma=50.,repeat=1,color='red',x=np.array([0,1]),y=np.array([0,1]))
+        run['series']=[series,dict(series,repeat=2)]
+        self.assertEqual(legend_label(run,series,'{voltage} ({run})'),'2 V (GSI board)')
+        figure=Figure();draw_comparison(figure,[run],title='Startup comparison',legend_template='{voltage} ({run})')
+        self.assertEqual(figure._suptitle.get_text(),'Startup comparison')
+        self.assertEqual(len(figure.axes[0].lines),2);self.assertEqual(len(figure.axes[0].get_legend().texts),1)
+        draw_comparison(figure,[run],legend_template='{voltage} ({run})',merge_labels=False)
+        self.assertEqual(len(figure.axes[0].get_legend().texts),2)
+        for bad in ('{unknown}','{run.__class__}','{run!r}','{run:>20}','{run'):
+            with self.assertRaises(ValueError):validate_legend_template(bad)
+
     def test_incompatible_axis_types_rejected(self):
         with self.assertRaises(ValueError):compatible([{'kind':'dc_current'}],{'kind':'dc_voltage'})
         with self.assertRaises(ValueError):compatible([{'kind':'startup'}],{'kind':'dc_current'})
@@ -53,6 +67,7 @@ class ComparisonGuiTests(unittest.TestCase):
                 self.assertEqual(len(dialog.figure.axes[0].lines),1);self.assertIn('GSI board',dialog.figure.axes[0].lines[0].get_label())
                 from measurement_comparison import series_key
                 dialog.runs[0]['series'][0]['display_color']='#ff00ff';dialog.legend_size.setValue(15);dialog.font_size.setValue(18);dialog.line_width.setValue(2.5)
+                dialog.plot_title.setText('Board comparison');dialog.legend_template.setCurrentText('{signal} ({run})')
                 dialog.redraw();self.assertEqual(dialog.figure.axes[0].lines[0].get_color(),'#ff00ff')
                 self.assertEqual(dialog.figure.axes[0].get_legend().get_texts()[0].get_fontsize(),15)
                 with patch('measurement_comparison_gui.QFileDialog.getSaveFileName',return_value=(str(p/'overlay.png'),'')):dialog.export()
@@ -61,5 +76,7 @@ class ComparisonGuiTests(unittest.TestCase):
                 self.assertEqual(manifest['runs'][0]['colors'][series_key(dialog.runs[0]['series'][0])],'#ff00ff')
                 with patch('measurement_comparison_gui.QFileDialog.getOpenFileName',return_value=(str(p/'overlay.json'),'')):dialog.open_comparison()
                 self.assertEqual(dialog.legend_size.value(),15)
+                self.assertEqual(dialog.plot_title.text(),'Board comparison')
+                self.assertEqual(dialog.legend_template.currentText(),'{signal} ({run})')
                 self.assertEqual(dialog.figure.axes[0].lines[0].get_color(),'#ff00ff')
             finally:dialog.close()

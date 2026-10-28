@@ -2,10 +2,10 @@
 import json
 from pathlib import Path
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QPushButton,QTableWidget,QTableWidgetItem,QHeaderView,QComboBox,QLabel,QFileDialog,QMessageBox,QSpinBox,QDoubleSpinBox,QColorDialog,QScrollArea,QWidget,QFormLayout,QDialogButtonBox
+from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QPushButton,QTableWidget,QTableWidgetItem,QHeaderView,QComboBox,QLabel,QFileDialog,QMessageBox,QSpinBox,QDoubleSpinBox,QColorDialog,QScrollArea,QWidget,QFormLayout,QDialogButtonBox,QLineEdit,QCheckBox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg,NavigationToolbar2QT
-from measurement_comparison import load_measurement,compatible,draw_comparison,series_key
+from measurement_comparison import load_measurement,compatible,draw_comparison,series_key,DEFAULT_LEGEND,validate_legend_template
 from PyQt6.QtGui import QColor
 
 class MeasurementComparison(QDialog):
@@ -17,6 +17,16 @@ class MeasurementComparison(QDialog):
         self.table=QTableWidget(0,3);self.table.setHorizontalHeaderLabels(['Show','Run label (editable)','Source folder']);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);self.table.setMaximumHeight(180);layout.addWidget(self.table);self.table.itemChanged.connect(self.redraw)
         row=QHBoxLayout();layout.addLayout(row);row.addWidget(QLabel('Signal'));self.signal=QComboBox();row.addWidget(self.signal);row.addWidget(QLabel('DC direction'));self.direction=QComboBox();self.direction.addItems(['both','up','down']);row.addWidget(self.direction)
         self.signal.currentIndexChanged.connect(self.redraw);self.direction.currentTextChanged.connect(self.redraw)
+        labels=QFormLayout();layout.addLayout(labels)
+        self.plot_title=QLineEdit();self.plot_title.setPlaceholderText('Optional plot title');labels.addRow('Title',self.plot_title)
+        self.legend_template=QComboBox();self.legend_template.setEditable(True)
+        self.legend_template.addItems([DEFAULT_LEGEND,'{voltage} ({run})','{voltage}','{signal} · {run}','{run} · {board} · {signal} · {sweep}'])
+        labels.addRow('Legend label',self.legend_template)
+        help=QLabel('Fields: {run}, {board}, {signal}, {voltage}/{vmax}, {current}, {sweep}, {repeat}, {unit}, {detail}. Voltage/current include units; ? means unavailable.')
+        help.setWordWrap(True);labels.addRow(help)
+        self.merge_labels=QCheckBox('Merge identical legend entries');self.merge_labels.setChecked(True);labels.addRow(self.merge_labels)
+        self.label_error=QLabel();labels.addRow(self.label_error)
+        self.plot_title.textChanged.connect(self.redraw);self.legend_template.currentTextChanged.connect(self.redraw);self.merge_labels.toggled.connect(self.redraw)
         style=QHBoxLayout();layout.addLayout(style)
         self.font_size=QSpinBox();self.font_size.setRange(8,30);self.font_size.setValue(14)
         self.legend_size=QSpinBox();self.legend_size.setRange(6,24);self.legend_size.setValue(11)
@@ -58,7 +68,10 @@ class MeasurementComparison(QDialog):
             if self.table.item(i,0).checkState()==Qt.CheckState.Checked:result.append(dict(r,label=self.table.item(i,1).text(),_style_index=i))
         return result
     def redraw(self,*args):
-        draw_comparison(self.figure,self.visible_runs(),self.signal.currentData(),self.direction.currentText(),self.font_size.value(),self.legend_size.value(),self.line_width.value(),self.legend_position.currentText());self.canvas.draw_idle()
+        try:
+            draw_comparison(self.figure,self.visible_runs(),self.signal.currentData(),self.direction.currentText(),self.font_size.value(),self.legend_size.value(),self.line_width.value(),self.legend_position.currentText(),self.plot_title.text(),self.legend_template.currentText(),self.merge_labels.isChecked())
+            self.label_error.setText('');self.canvas.draw_idle()
+        except ValueError as e:self.label_error.setText(str(e))
     def edit_colors(self):
         dialog=QDialog(self);dialog.setWindowTitle('Comparison line colors');dialog.resize(850,500)
         layout=QVBoxLayout(dialog);scroll=QScrollArea();scroll.setWidgetResizable(True);content=QWidget();form=QFormLayout(content);scroll.setWidget(content);layout.addWidget(scroll)
@@ -76,12 +89,14 @@ class MeasurementComparison(QDialog):
 
     def export(self):
         if not self.visible_runs():return
+        try:validate_legend_template(self.legend_template.currentText())
+        except ValueError as e:QMessageBox.warning(self,'Invalid legend template',str(e));return
         file,_=QFileDialog.getSaveFileName(self,'Save comparison','comparison.png','PNG (*.png)')
         if not file:return
         base=Path(file).with_suffix('')
         try:
             self.figure.savefig(str(base)+'.png',dpi=180);self.figure.savefig(str(base)+'.pdf')
-            manifest={'version':1,'runs':[dict(path=r['path'],label=self.table.item(i,1).text(),enabled=self.table.item(i,0).checkState()==Qt.CheckState.Checked,colors={series_key(s):s['display_color'] for s in r['series'] if s.get('display_color')}) for i,r in enumerate(self.runs)],'signal':self.signal.currentData(),'direction':self.direction.currentText(),'appearance':{'font_size':self.font_size.value(),'legend_size':self.legend_size.value(),'line_width':self.line_width.value(),'legend_position':self.legend_position.currentText()}}
+            manifest={'version':1,'runs':[dict(path=r['path'],label=self.table.item(i,1).text(),enabled=self.table.item(i,0).checkState()==Qt.CheckState.Checked,colors={series_key(s):s['display_color'] for s in r['series'] if s.get('display_color')}) for i,r in enumerate(self.runs)],'signal':self.signal.currentData(),'direction':self.direction.currentText(),'title':self.plot_title.text(),'legend_template':self.legend_template.currentText(),'merge_labels':self.merge_labels.isChecked(),'appearance':{'font_size':self.font_size.value(),'legend_size':self.legend_size.value(),'line_width':self.line_width.value(),'legend_position':self.legend_position.currentText()}}
             Path(str(base)+'.json').write_text(json.dumps(manifest,indent=2)+'\n')
         except Exception as e:QMessageBox.warning(self,'Export failed',str(e))
     def open_comparison(self):
@@ -93,6 +108,7 @@ class MeasurementComparison(QDialog):
                 run=load_measurement(entry['path']);compatible(loaded,run);loaded.append(run)
             self.table.blockSignals(True);self.table.setRowCount(0);self.table.blockSignals(False);self.runs=[]
             for entry in data['runs']:self.append_run(entry['path'],entry['label'],entry.get('enabled',True),entry.get('colors',{}))
+            self.plot_title.setText(data.get('title',''));self.legend_template.setCurrentText(data.get('legend_template',DEFAULT_LEGEND));self.merge_labels.setChecked(data.get('merge_labels',True))
             appearance=data.get('appearance',{});self.font_size.setValue(appearance.get('font_size',14));self.legend_size.setValue(appearance.get('legend_size',11));self.line_width.setValue(appearance.get('line_width',1.8));self.legend_position.setCurrentText(appearance.get('legend_position','best'))
             self.signal.setCurrentIndex(max(0,self.signal.findData(data.get('signal'))));self.direction.setCurrentText(data.get('direction','both'));self.redraw()
         except Exception as e:QMessageBox.warning(self,'Could not open comparison',str(e))

@@ -1424,3 +1424,16 @@ independently; reset returns to the shared signal color. These display-only
 choices are saved in the comparison JSON and restored on reopening, without
 changing board marker colors or source data. Older comparison JSON files load
 with the new defaults.
+
+Comparison plots also have an optional **Title** and an editable **Legend label**
+template with presets. For voltage and run only, choose `{voltage} ({run})`.
+Available fields are `{run}` (editable run-table label), `{board}`, `{signal}`,
+`{sweep}` (up/down), `{voltage}` / `{vmax}`, `{current}`, `{repeat}`, `{unit}`
+and `{detail}` (the original full sweep/capture detail). `{run_label}`, `{label}`
+and `{direction}` alias run, signal and sweep. Voltage and current include
+units; unknown values show `? V`/`? mA`, and a varying DC current shows `swept`.
+Voltage means the programmed supply limit, not measured Vin. Placeholders use
+plain braces; literal braces can be escaped as `{{` and `}}`. Invalid templates
+show an inline error and cannot be exported. **Merge identical legend entries**
+removes duplicate text from the legend while preserving all plotted curves.
+Title, template and merge setting persist in exported comparison JSON.
