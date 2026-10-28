@@ -80,16 +80,27 @@ class StartupPage(QWidget):
         from probe_correction import waveform_view
         draw_overlay(waveform_view(self.records,self.profile,self.probe_corrections),self.profile,figure=self.figure)
 
+    def probe_mapping_changed(self,key,value):
+        if self.is_running() or not self.profile or not self.records:return
+        if not any((m['board'],m['testpoint'],m['channel'])==key for m in self.profile['mappings']):return
+        selected=dict(self.probe_corrections);selected[key[2]]=value
+        self.apply_probe_corrections(selected)
+
+    def apply_probe_corrections(self,selected):
+        from probe_correction import waveform_view
+        if self.loaded_directory:
+            (self.loaded_directory/'probe_corrections.json').write_text(json.dumps(selected,indent=2)+'\n')
+            draw_overlay(waveform_view(self.records,self.profile,selected),self.profile,self.loaded_directory)
+        self.probe_corrections=selected
+        self.redraw_waveforms();self.canvas.draw_idle()
+
     def correct_probes(self):
         if self.is_running() or not self.records or not self.loaded_directory:return
         from probe_correction import edit_corrections,waveform_view
         selected=edit_corrections(self,self.profile,self.probe_corrections)
         if selected is None:return
         try:
-            (self.loaded_directory/'probe_corrections.json').write_text(json.dumps(selected,indent=2)+'\n')
-            self.probe_corrections=selected
-            draw_overlay(waveform_view(self.records,self.profile,selected),self.profile,self.loaded_directory)
-            self.redraw_waveforms();self.canvas.draw_idle()
+            self.apply_probe_corrections(selected)
         except Exception as e:QMessageBox.warning(self,'Could not save correction',str(e))
 
     def open_saved(self):

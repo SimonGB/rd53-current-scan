@@ -49,6 +49,7 @@ class Worker(QThread):
     def run(self):
         try:
             out=run_mapped(self.args,self.profile,self.stop,self.point.emit,notes=self.notes)
+            self.output_directory=out
             self.done.emit(f'Completed · {out}',True)
         except BaseException as e:self.done.emit(f'{type(e).__name__}: {e}',False)
 
@@ -449,6 +450,27 @@ class Window(QMainWindow):
         self.refresh_board()
 
     def mapping_changed(self,item):
+        if item.column()==3 and not self.running:
+            try:
+                from probe_correction import factor,scale_rows
+                row=item.row()
+                key=tuple(self.table.item(row,c).text().strip() for c in (0,1,2))
+                value=factor(item.text())
+                profile=getattr(self,'captured_profile',{})
+                matching=next((m for m in profile.get('mappings',[]) if (m['board'],m['testpoint'],m['channel'])==key),None)
+                if matching and profile.get('backend')=='pico' and self.rows:
+                    corrections=dict(getattr(self,'captured_probe_corrections',{}));corrections[key[2]]=value
+                    directory=getattr(self,'captured_directory',None)
+                    if directory:(Path(directory)/'probe_corrections.json').write_text(json.dumps(corrections,indent=2)+'\n')
+                    scale_rows(self.rows,profile,corrections);self.captured_probe_corrections=corrections
+                    self.live_dashboard.update_dc(self.rows,self.progress.value(),self.progress.maximum())
+                    self.overview.readings(self.rows[-len(profile['mappings']):])
+                if hasattr(self,'measurements_page'):
+                    self.measurements_page.startup_page.probe_mapping_changed(key,value)
+            except (ValueError,TypeError) as error:
+                self.log.appendPlainText('Probe correction: '+str(error))
+            except OSError as error:
+                self.log.appendPlainText('Could not save probe correction: '+str(error))
         self.refresh_board()
     def snapshot(self):
         p=copy.deepcopy(self.profile);p['backend']=self.backend.currentText();p['mappings']=self.read_mapping()
@@ -746,6 +768,7 @@ class Window(QMainWindow):
             for card in self.overview.cards.values():card.status.setText('Waiting for data…')
             self.table.setEnabled(False);self.backend.setEnabled(False);self.sweep_mode.setEnabled(False);self.startbtn.setEnabled(False);self.stopbtn.setEnabled(True)
             self.state.setText('SIMULATING' if args.simulate else 'MEASURING');self.log.appendPlainText(json.dumps(p,indent=2))
+            self.captured_profile=copy.deepcopy(p);self.captured_probe_corrections={};self.captured_directory=None
             self.worker=Worker(args,p);self.worker.point.connect(self.point);self.worker.done.connect(self.finished);self.worker.start()
             self.live_dashboard.start_dc()
             self.station_tabs.setCurrentIndex(3)
@@ -789,6 +812,7 @@ class Window(QMainWindow):
         summary=' | '.join(f"{r['testpoint']}: {r['mean']:.5f} {r['unit']}" for r in selected)
         self.readout.setText(f"{len(batch)} inputs · "+summary);self.readout.setToolTip(text);self.log.appendPlainText(text);self.save_plots_button.setEnabled(bool(self.rows));self.redraw()
     def finished(self,text,ok):
+        self.captured_directory=getattr(self.worker,'output_directory',None)
         self.running=False;self.comments.setReadOnly(False);self.startbtn.setEnabled(not bool(getattr(self,'abort_dialog',None)));self.stopbtn.setEnabled(False);self.table.setEnabled(True);self.backend.setEnabled(True);self.sweep_mode.setEnabled(True)
         self.state.setText('COMPLETE' if ok else 'STOPPED / ERROR');self.log.appendPlainText(text)
         self.estimate_state='done' if ok else 'stopped';self.update_eta();self.sync_overview()

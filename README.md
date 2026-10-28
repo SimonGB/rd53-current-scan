@@ -1366,3 +1366,12 @@ script does not apply the sidecar. Acquisition trigger timing is unchanged:
 correcting the voltage factor does not move the recorded trigger point or
 recover clipped samples. This facility is available for Pico runs with saved
 channel/probe mappings, not Venelin ADC scaling.
+
+After acquisition, editing **Probe × (Pico)** directly in **Boards & pinning**
+also rescales the current DC plot/live dashboard and the displayed startup
+waveforms. Corrections match the original board, testpoint, and physical
+channel, so remapping a signal does not relabel an existing measurement.
+The original acquisition profile remains the scaling reference. Completed
+runs save the correction sidecar automatically; startup overlay exports update
+as well. DC plots can be exported again with Save Plots. Probe edits are
+blocked during acquisition, and clipped samples cannot be recovered.
