@@ -1302,3 +1302,67 @@ These GUI changes have not been validated on the user's physical
 Ubuntu/PicoScope/Rigol station yet. If a modal/Qt error occurs, retain
 the full terminal traceback and take the generator output to OFF before
 further debugging.
+
+### Triggered startup waveform sweep
+
+Under **3 · Measurements → Pico · Startup waveforms**, configure comma-separated
+Hameg current limits, repeat count, trigger input and threshold, pre/post-trigger
+window, sample rate, timeout, off/discharge delay, voltage compliance and maximum
+current. Configure the Hameg channel and Pico mappings on the first two tabs.
+Use **Simulate** first. For hardware, select Pico, start with the DUT channel off,
+verify grounding and supply limits, then check the wiring confirmation. The
+Hameg current setting is not a measurement of instantaneous current. Use a
+calibrated current-sense probe or powered and calibrated board amplifier if a
+current waveform is needed. The Hameg voltage and current limits are not
+instantaneous protection against all transients.
+
+Each run prepares the Hameg channel with output off, arms Pico rising-edge
+hardware trigger with auto-trigger disabled, waits for the scope state
+WAITING_FOR_TRIGGER (pre-trigger samples filled), then enables the channel.
+It stops and disables the channel after capture, stop, timeout, and error.
+When the Hameg master was off, all other channel selections must be off before
+starting. Other channel setpoints are not changed. Wait long enough between
+trials for the board to discharge; verify discharge experimentally. Scope
+probe grounds are shared: do not short serial power domains.
+
+The scope driver must export `ps6000aGetScopeState`; Pico introduced this in
+newer SDK releases. The program binds it when missing from the Python wrapper,
+but an older native driver fails closed before power-on. The trigger threshold
+is specified at the probe tip, and results use the actual sample interval and
+resolution. The trigger point is the electrical threshold crossing, not the
+serial command; timestamps are sample-quantized.
+
+Results under `results/<run>/waveform_<timestamp>` contain a metadata JSON,
+raw NPZ and CSV for every capture, plus PNG/PDF overlays with one panel per
+mapped channel. Interrupted runs keep completed waveforms. Use **Open saved
+waveform run** to reload and inspect the overlays later. Hardware has not been
+validated by the automated tests; initially verify a low-current single trial
+against the PicoScope application before running a larger series.
+
+The startup waveform sweep also accepts a comma-separated list of Hameg
+voltage limits. It runs every voltage/current combination and each repetition,
+with the DUT channel disabled between trials. Enter a separately verified
+maximum voltage setting; all requested limits must be at or below it. Each
+waveform filename, capture metadata, and plot legend records both the
+programmed current and voltage limit. Existing single-voltage runs remain
+readable. Hameg settings are not a measurement of the voltage/current actually
+reached at the device, and the software ceiling does not eliminate overshoot.
+
+### Correcting a probe factor after acquisition
+
+Open a saved DC sweep or startup waveform run, then select **Correct saved
+probe factors…**. Enter the actual factor per mapped Pico input. For example,
+recorded ×1 → actual ×10 scales the signal by ten; recorded ×10 → actual ×1
+scales it by one tenth. Repeated edits and resetting to the original factor
+are supported. DC uncertainties scale with the signal and Vin−Vout is
+recomputed. Hameg readings and the waveform time axis are not rescaled.
+
+Corrections persist in `probe_corrections.json` alongside the run, leaving
+original CSV, NPZ and acquisition metadata unchanged. The DC saved-run loader
+and startup waveform viewer apply this sidecar on reopening. Startup overlay
+PNG/PDF files are regenerated when a correction is saved; export DC plots
+again with Save Plots. Directly reading the original CSV/NPZ in an external
+script does not apply the sidecar. Acquisition trigger timing is unchanged:
+correcting the voltage factor does not move the recorded trigger point or
+recover clipped samples. This facility is available for Pico runs with saved
+channel/probe mappings, not Venelin ADC scaling.

@@ -123,6 +123,8 @@ def load_run(path):
             if setting is not None:
                 for key in ('color', 'linestyle', 'marker'):
                     row[key] = setting.get(key, '')
+    from probe_correction import read_corrections,scale_rows
+    scale_rows(rows,metadata.get("profile",{}),read_corrections(directory))
     return rows, settings, directory
 
 

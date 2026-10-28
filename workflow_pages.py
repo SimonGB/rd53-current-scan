@@ -318,7 +318,7 @@ class MeasurementPage(QWidget):
         layout.addWidget(heading)
         note=QLabel('Instrument settings and physical channel assignments stay '
                     'shared across all measurements. Choose a procedure below; '
-                    'Start automatically opens the live dashboard.')
+                    'Select a procedure and start its acquisition.')
         note.setWordWrap(True)
         layout.addWidget(note)
         self.modes=QTabWidget()
@@ -329,4 +329,7 @@ class MeasurementPage(QWidget):
         dc_scroll.setWidget(dc)
         self.modes.addTab(dc_scroll,'Hameg · Current / line regulation')
         self.modes.addTab(rigol,'Rigol · Frequency response')
+        from startup_waveform_gui import StartupPage
+        self.startup_page=StartupPage(station)
+        self.modes.addTab(self.startup_page,'Pico · Startup waveforms')
         layout.addWidget(self.modes,1)

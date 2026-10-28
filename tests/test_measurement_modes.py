@@ -47,7 +47,9 @@ class TestMeasurementModes(unittest.TestCase):
             self.assertEqual(window.dg4162_page.resource.currentText(),'/dev/usbtmc42')
             window.station_tabs.setCurrentIndex(2)
             self.assertEqual(window.station_tabs.currentIndex(),2)
-            self.assertEqual(window.measurements_page.modes.count(),2)
+            self.assertEqual(window.measurements_page.modes.count(),3)
+            self.assertIs(window.measurements_page.modes.widget(2),
+                          window.measurements_page.startup_page)
             self.assertIs(window.measurements_page.modes.widget(1),
                           window.dg4162_page)
             window.measurements_page.dc_panel.fields['start'].setValue(12)

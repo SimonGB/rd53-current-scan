@@ -286,6 +286,8 @@ class DG4162Page(QWidget):
             station=getattr(self.profile_provider,'__self__',None)
             if station is not None and getattr(station,'running',False):
                 raise ValueError('A Hameg scan is already active. Stop it before enabling the Rigol.')
+            if station is not None and station.measurements_page.startup_page.is_running():
+                raise ValueError('A startup sweep is already active. Stop it first.')
             args=self.collect()
             validate(args)
             if args.enable_output and self.measure.isChecked():

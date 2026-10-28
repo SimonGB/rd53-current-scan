@@ -718,6 +718,9 @@ class Window(QMainWindow):
             self.reset_eta()
 
     def start(self):
+        if self.measurements_page.startup_page.is_running():
+            QMessageBox.warning(self,'Startup sweep active','Stop the startup sweep first.')
+            return
         if hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
             QMessageBox.warning(self,'Rigol sweep active',
                                 'Stop the Rigol frequency sweep before starting a Hameg scan.')
@@ -907,12 +910,18 @@ class Window(QMainWindow):
         self.backend.setEnabled(True)
 
     def stop_active_measurement(self):
-        if self.dg4162_page.is_running():
+        if self.measurements_page.startup_page.is_running():
+            self.measurements_page.startup_page.stop()
+        elif self.dg4162_page.is_running():
             self.dg4162_page.stop_run()
         elif self.running:
             self.stop()
 
     def closeEvent(self,event):
+        if self.measurements_page.startup_page.is_running():
+            self.measurements_page.startup_page.stop()
+            event.ignore()
+            return
         if hasattr(self,'dg4162_page') and self.dg4162_page.is_running():
             self.dg4162_page.stop_run()
             QMessageBox.information(

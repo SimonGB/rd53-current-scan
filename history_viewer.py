@@ -19,6 +19,11 @@ class HistoryViewer(QDialog):
     def __init__(self, path, parent=None):
         super().__init__(parent)
         self.rows, settings, self.directory = load_run(path)
+        metadata_path=self.directory/'metadata.json'
+        metadata=json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+        self.probe_profile=metadata.get('profile',{})
+        from probe_correction import read_corrections
+        self.probe_corrections=read_corrections(self.directory)
         self.setWindowTitle('Saved measurements · ' + self.directory.name)
         self.resize(1100, 850)
         layout = QVBoxLayout(self)
@@ -72,6 +77,9 @@ class HistoryViewer(QDialog):
             page_layout.addWidget(scroll)
             tabs.addTab(page, direction.capitalize() + ' sweep')
             self.plots.append((direction, figure, canvas))
+        correct=QPushButton('Correct saved probe factors…')
+        correct.setEnabled(self.probe_profile.get('backend')=='pico')
+        correct.clicked.connect(self.correct_probes);layout.addWidget(correct)
         export = QPushButton('Save Plots…');export.clicked.connect(self.export)
         layout.addWidget(export)
         for field in (self.title, self.configuration):
@@ -81,6 +89,16 @@ class HistoryViewer(QDialog):
         self.maximum.valueChanged.connect(self.redraw)
         self.board.currentIndexChanged.connect(self.redraw)
         self.redraw()
+
+    def correct_probes(self):
+        from probe_correction import edit_corrections,scale_rows
+        selected=edit_corrections(self,self.probe_profile,self.probe_corrections)
+        if selected is None:return
+        try:
+            (self.directory/'probe_corrections.json').write_text(json.dumps(selected,indent=2)+'\n')
+            scale_rows(self.rows,self.probe_profile,selected)
+            self.probe_corrections=selected;self.redraw()
+        except Exception as e:QMessageBox.warning(self,'Could not save correction',str(e))
 
     def refresh_style_table(self):
         """One style row per signal, shared across both sweep directions."""
