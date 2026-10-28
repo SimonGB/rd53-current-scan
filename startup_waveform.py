@@ -165,7 +165,14 @@ def draw_overlay(records,profile,destination=None,figure=None):
         for r in records:
             if m['channel'] not in r['values']:continue
             v=r.get('voltage_limit_v'); vlabel=f'{v:g} V' if v is not None else 'V limit unknown'
-            ax.plot(r['time_s']*1000,r['values'][m['channel']],color=colors[(r['current_ma'],v)],alpha=.65,linewidth=.9,label=f"{r['current_ma']:g} mA · {vlabel} · #{r['repeat']}")
+            from testpoint_pinning import point_color
+            base=point_color(profile,m['board'],m['testpoint']) or m.get('color','')
+            line_color=colors[(r['current_ma'],v)]
+            if base:
+                from matplotlib.colors import to_rgb
+                blend=.45*combos.index((r['current_ma'],v))/max(1,len(combos)-1)
+                line_color=tuple((1-blend)*c+blend for c in to_rgb(base))
+            ax.plot(r['time_s']*1000,r['values'][m['channel']],color=line_color,alpha=.8,linewidth=.9,label=f"{r['current_ma']:g} mA · {vlabel} · #{r['repeat']}")
         ax.axvline(0,color='black',linewidth=.6,alpha=.5);ax.set_ylabel(f"{m['board']} / {m['testpoint']} [V]");ax.grid(alpha=.25)
     axes[-1].set_xlabel('Time from trigger [ms]')
     if records:axes[0].legend(fontsize=7,ncol=2)

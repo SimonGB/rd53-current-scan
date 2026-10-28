@@ -17,20 +17,20 @@ class BoardCard(QWidget):
         self.view.clicked.connect(self.focus_point)
         self.view.place.connect(lambda x,y:self.placed.emit(self.board['id'],x,y))
         if board.get('kind')=='connections':self.view.hide()
-        self.inputs={}
+        self.inputs={};self.labels={}
         for point in board['testpoints']:
             row=QHBoxLayout();label=QLabel(point['name']);label.setFixedWidth(155 if board.get('kind')=='connections' else 42);label.setWordWrap(True);label.setToolTip(point['name'])
             combo=QComboBox();combo.setMinimumWidth(0);combo.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
             combo.setToolTip('Choose the input physically wired to this testpoint')
             combo.currentIndexChanged.connect(lambda _,name=point['name'],c=combo:self.assigned.emit(self.board['id'],name,c.currentData() or ''))
-            self.inputs[point['name']]=combo;row.addWidget(label);row.addWidget(combo,1);layout.addLayout(row)
+            self.labels[point['name']]=label;self.inputs[point['name']]=combo;row.addWidget(label);row.addWidget(combo,1);layout.addLayout(row)
         self.status=QLabel('Not measured');self.status.setWordWrap(True);self.status.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred);layout.addWidget(self.status)
         layout.addStretch();self.setStyleSheet('BoardCard {border:1px solid #35566e;border-radius:8px;background:#102334;}')
     def focus_point(self,name):
         self.focused.emit(self.board['id'],name)
         if name in self.inputs:
             combo=self.inputs[name];combo.setFocus()
-            if combo.isEnabled():combo.showPopup()
+            if combo.isEnabled() and combo.isVisible():combo.showPopup()
     def sync(self,board,mappings,choices,running,edit,selected):
         self.board=board;self.include.blockSignals(True);self.include.setChecked(board.get('enabled',True));self.include.blockSignals(False);self.include.setEnabled(not running)
         self.view.board=board;self.view.mappings=mappings;self.view.edit=edit and not running
@@ -38,6 +38,9 @@ class BoardCard(QWidget):
         assignments={(m['board'],m['testpoint']):m['channel'] for m in mappings}
         used={m['channel']:(m['board'],m['testpoint']) for m in mappings}
         for point,combo in self.inputs.items():
+            color=next((p.get('color','') for p in board['testpoints'] if p['name']==point),'')
+            self.labels[point].setStyleSheet('color: '+color if color else '')
+            combo.setVisible(not (choices and all(c in 'ABCD' and len(c)==1 for c,_ in choices)))
             current=assignments.get((board['id'],point),'')
             combo.blockSignals(True);combo.clear();combo.addItem('Not assigned','')
             available={c for c,_ in choices}

@@ -27,6 +27,7 @@ from scan import parser
 from station import run_mapped
 from run_comments import RunComments
 from board_overview import BoardOverview
+from testpoint_pinning import point_color
 from sweep_plots import draw_sweep, export_sweeps
 from history_viewer import HistoryViewer
 from progress_estimate import ProgressEstimate,duration
@@ -92,8 +93,8 @@ class BoardView(QWidget):
         for tp in self.board.get('testpoints',[]):
             x=r.left()+tp['x']*r.width();y=r.top()+tp['y']*r.height()
             matches=[m for m in self.mappings if m['board']==self.board.get('id') and m['testpoint']==tp['name']]
-            p.setBrush(QColor('#fbbf24' if tp['name']==self.selected else '#60d5b5' if matches else '#9cabbc'))
-            p.setPen(QPen(QColor('#081820'),2));p.drawEllipse(int(x-7),int(y-7),14,14)
+            p.setBrush(QColor(tp.get('color','#60d5b5' if matches else '#9cabbc')))
+            p.setPen(QPen(QColor('#fbbf24' if tp['name']==self.selected else '#081820'),3 if tp['name']==self.selected else 2));p.drawEllipse(int(x-7),int(y-7),14,14)
             p.setPen(QColor('#ffffff'));p.setFont(QFont('Sans',9))
             text=tp['name']+(' ← '+matches[0]['channel'] if matches and not self.compact else '')
             label_width=42 if self.compact else 170
@@ -208,14 +209,18 @@ class Window(QMainWindow):
         self.overview.assigned.connect(self.assign_from_card);self.overview.enabled.connect(self.include_from_card)
         self.overview.focused.connect(self.focus_from_card);self.overview.placed.connect(self.place_from_card)
         editrow=QHBoxLayout();self.editpoints=QCheckBox('Place / move testpoints on click');editrow.addWidget(self.editpoints)
+        colors=QPushButton('Testpoint colors…');colors.clicked.connect(self.edit_testpoint_colors);editrow.addWidget(colors)
         remove=QPushButton('Remove testpoint');remove.clicked.connect(self.remove_testpoint);editrow.addWidget(remove);editrow.addStretch();rl.addLayout(editrow)
         self.table=QTableWidget(0,6);self.table.setHorizontalHeaderLabels(['RD53 board','Testpoint','Measurement input','Probe × (Pico)','BNC ±range [V] (Pico)','Plotting'])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);self.table.setMaximumHeight(170);self.table.setMinimumHeight(110);rl.addWidget(self.table)
+        from pico_pinning_gui import PicoPinning
+        self.pico_pinning=PicoPinning(self);rl.addWidget(self.pico_pinning)
         self.table.setItemDelegateForColumn(2,ChannelDelegate(self))
         self.table.cellDoubleClicked.connect(self.edit_plotting)
         mapbuttons=QHBoxLayout()
         for title,fn in [('Add assignment',self.add_mapping),('Add connection…',self.add_connection_dialog),('Remove selected',self.remove_mapping)]:
             btn=QPushButton(title);btn.clicked.connect(fn);mapbuttons.addWidget(btn)
+        self.advanced_pinning=QCheckBox('Advanced assignments');self.advanced_pinning.toggled.connect(self.refresh_board);mapbuttons.addWidget(self.advanced_pinning)
         self.showall=QCheckBox('All wiring rows');self.showall.toggled.connect(self.refresh_board);mapbuttons.addWidget(self.showall)
         self.plotall=QCheckBox('Plot all boards');self.plotall.setChecked(True);self.plotall.toggled.connect(self.redraw);mapbuttons.addWidget(self.plotall)
         mapbuttons.addStretch();rl.addLayout(mapbuttons)
@@ -384,7 +389,7 @@ class Window(QMainWindow):
             style=style if isinstance(style,dict) else {}
             result.append(dict(board=texts[0],testpoint=texts[1],channel=texts[2],
                                probe=float(texts[3]),range=float(texts[4]),
-                               color=style.get('color',''),linestyle=style.get('linestyle',''),
+                               color=point_color(self.profile,texts[0],texts[1]) or style.get('color',''),linestyle=style.get('linestyle',''),
                                marker=style.get('marker','')))
         return result
 
@@ -442,6 +447,9 @@ class Window(QMainWindow):
             item.setBackground(QBrush(QColor(updated['color'])) if updated['color'] else QBrush())
         finally:
             self.table.blockSignals(False)
+        for b in self.profile['boards']:
+            for tp in b['testpoints']:
+                if b['id']==self.table.item(row,0).text() and tp['name']==self.table.item(row,1).text() and updated['color']:tp['color']=updated['color']
         by_point={(m['board'],m['testpoint']):m for m in self.read_mapping()}
         for record in self.rows:
             setting=by_point.get((record['board'],record['testpoint']))
@@ -450,6 +458,13 @@ class Window(QMainWindow):
         self.refresh_board()
 
     def mapping_changed(self,item):
+        if item.column()==5:
+            style=item.data(Qt.ItemDataRole.UserRole) or {}
+            if style.get('color'):
+                row=item.row()
+                for b in self.profile['boards']:
+                    for tp in b['testpoints']:
+                        if b['id']==self.table.item(row,0).text() and tp['name']==self.table.item(row,1).text():tp['color']=style['color']
         if item.column()==3 and not self.running:
             try:
                 from probe_correction import factor,scale_rows
@@ -476,6 +491,8 @@ class Window(QMainWindow):
         p=copy.deepcopy(self.profile);p['backend']=self.backend.currentText();p['mappings']=self.read_mapping()
         p['adc']={n:e.text() for n,e in self.adcfields.items()};return validate_profile(p)
     def rebuild(self):
+        from testpoint_pinning import initialize_colors
+        initialize_colors(self.profile)
         selected=self.boardselect.currentText();self.boardselect.blockSignals(True);self.boardselect.clear()
         self.boardselect.addItems([b['id'] for b in self.profile['boards']]);self.boardselect.setCurrentText(selected if selected in [b['id'] for b in self.profile['boards']] else self.profile['boards'][0]['id']);self.boardselect.blockSignals(False)
         self.table.blockSignals(True);self.table.setRowCount(len(self.profile['mappings']))
@@ -498,6 +515,32 @@ class Window(QMainWindow):
         self.include.blockSignals(True);self.include.setChecked(self.view.board.get('enabled',True));self.include.blockSignals(False)
         for row in range(self.table.rowCount()):self.table.setRowHidden(row,not self.showall.isChecked() and self.table.item(row,0).text()!=self.boardselect.currentText())
         self.view.update();self.sync_overview();self.redraw()
+        if hasattr(self,'pico_pinning'):
+            self.table.setVisible(self.backend.currentText()!='pico' or self.advanced_pinning.isChecked())
+            self.pico_pinning.sync()
+    def edit_testpoint_colors(self):
+        if self.running or self.pico_pinning.busy():return
+        dialog=QDialog(self);dialog.setWindowTitle('Board testpoint colors');layout=QFormLayout(dialog)
+        for b in self.profile['boards']:
+            for tp in b['testpoints']:
+                button=QPushButton(tp.get('color','Choose color'))
+                button.setStyleSheet('color: '+tp.get('color','#ffffff'))
+                def pick(checked=False,point=tp,widget=button):
+                    color=QColorDialog.getColor(QColor(point.get('color','#56B4E9')),dialog,point['name'])
+                    if color.isValid():
+                        point['color']=color.name();widget.setText(color.name());widget.setStyleSheet('color: '+color.name())
+                        self.apply_testpoint_colors()
+                button.clicked.connect(pick);layout.addRow(b['id']+' / '+tp['name'],button)
+        done=QDialogButtonBox(QDialogButtonBox.StandardButton.Close);done.rejected.connect(dialog.reject);layout.addRow(done);dialog.exec()
+
+    def apply_testpoint_colors(self):
+        from testpoint_pinning import point_color
+        for row in self.rows:
+            color=point_color(self.profile,row['board'],row['testpoint'])
+            if color:row['color']=color
+        self.refresh_board()
+        if hasattr(self,'live_dashboard'):self.live_dashboard.update_dc(self.rows,self.progress.value(),self.progress.maximum())
+
     def select_point(self,name):
         self.view.selected=name;self.view.update();self.sync_overview()
         for r in range(self.table.rowCount()):
@@ -627,7 +670,9 @@ class Window(QMainWindow):
         if ok and name.strip():
             point=next((p for p in self.view.board['testpoints'] if p['name']==name.strip()),None)
             if point is None:point={'name':name.strip()};self.view.board['testpoints'].append(point)
-            point.update(x=x,y=y);self.view.update()
+            point.update(x=x,y=y)
+            from testpoint_pinning import initialize_colors
+            initialize_colors(self.profile);self.view.update()
     def add_connection_dialog(self):
         if self.running:return
         if self.backend.currentText()!='venelin':

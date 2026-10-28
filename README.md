@@ -1375,3 +1375,26 @@ The original acquisition profile remains the scaling reference. Completed
 runs save the correction sidecar automatically; startup overlay exports update
 as well. DC plots can be exported again with Save Plots. Probe edits are
 blocked during acquisition, and clipped samples cannot be recovered.
+
+### Persistent testpoint colors and four-probe patch table
+
+Create as many named markers as needed on each board. **Testpoint colors…**
+sets each marker's persistent color, even when no channel is assigned. Common
+signals start with Vin red, Vout green, Vref blue, and Vrefpre pink. Saved wiring
+profiles include marker colors. Existing custom mapping colors migrate to the
+marker when loading older profiles.
+
+For Pico, the compact **Pico probe connections** table always has rows A–D.
+Select the board/testpoint connected to each probe from a dropdown, or choose
+Not connected. Replacing a selection disconnects that channel's previous
+signal without deleting any board markers. Selecting a signal assigned to
+another probe moves the assignment and frees the old channel. This only
+records the physical connections; move the actual probes yourself. Channel
+probe factors and input ranges survive disconnection/reassignment; colors
+follow the physical testpoint instead of the channel. The advanced wiring
+editor remains available with **Advanced assignments**. Venelin keeps its
+existing assignment controls.
+
+DC plots use the marker color; startup overlays use shades of that signal's
+color to distinguish current/voltage combinations. The original board and
+mapping profile is saved with each measurement as before.
