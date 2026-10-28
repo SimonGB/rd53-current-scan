@@ -263,6 +263,7 @@ class Window(QMainWindow):
         history_button=QPushButton('Open saved measurements…')
         history_button.clicked.connect(self.open_history)
         analysis_layout.addWidget(history_button)
+        combine_button=QPushButton('Combine saved measurements…');combine_button.clicked.connect(self.open_measurement_comparison);analysis_layout.addWidget(combine_button)
         compare_button=QPushButton('Compare sweeps / Rext / Vofshalf…')
         compare_button.clicked.connect(self.open_rext_compare)
         analysis_layout.addWidget(compare_button)
@@ -910,6 +911,10 @@ class Window(QMainWindow):
             QMessageBox.information(self, 'Plots saved', f'PNG and PDF plots saved to:\n{output}')
         except Exception as exc:
             QMessageBox.warning(self, 'Cannot save plots', str(exc))
+
+    def open_measurement_comparison(self):
+        from measurement_comparison_gui import MeasurementComparison
+        dialog=MeasurementComparison(self);dialog.exec()
 
     def open_rext_compare(self):
         """Open a read-only Rext comparison for this board's saved scans."""

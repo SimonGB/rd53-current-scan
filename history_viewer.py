@@ -80,6 +80,7 @@ class HistoryViewer(QDialog):
         correct=QPushButton('Correct saved probe factors…')
         correct.setEnabled(self.probe_profile.get('backend')=='pico')
         correct.clicked.connect(self.correct_probes);layout.addWidget(correct)
+        compare=QPushButton('Compare with other runs…');compare.clicked.connect(self.compare_runs);layout.addWidget(compare)
         export = QPushButton('Save Plots…');export.clicked.connect(self.export)
         layout.addWidget(export)
         for field in (self.title, self.configuration):
@@ -89,6 +90,10 @@ class HistoryViewer(QDialog):
         self.maximum.valueChanged.connect(self.redraw)
         self.board.currentIndexChanged.connect(self.redraw)
         self.redraw()
+
+    def compare_runs(self):
+        from measurement_comparison_gui import MeasurementComparison
+        dialog=MeasurementComparison(self);dialog.append_run(self.directory);dialog.exec()
 
     def correct_probes(self):
         from probe_correction import edit_corrections,scale_rows

@@ -43,6 +43,7 @@ class StartupPage(QWidget):
         stop=QPushButton('Stop');stop.clicked.connect(self.stop);buttons.addWidget(stop)
         load=QPushButton('Open saved waveform run…');load.clicked.connect(self.open_saved);buttons.addWidget(load)
         correct=QPushButton('Correct saved probe factors…');correct.clicked.connect(self.correct_probes);layout.addWidget(correct)
+        compare=QPushButton('Compare with other runs…');compare.clicked.connect(self.compare_runs);layout.addWidget(compare)
         self.status=QLabel('Ready');self.status.setWordWrap(True);layout.addWidget(self.status)
         self.figure=Figure(figsize=(9,8));self.canvas=FigureCanvasQTAgg(self.figure);self.canvas.setMinimumHeight(500)
         scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(self.canvas);layout.addWidget(scroll,1)
@@ -102,6 +103,12 @@ class StartupPage(QWidget):
         try:
             self.apply_probe_corrections(selected)
         except Exception as e:QMessageBox.warning(self,'Could not save correction',str(e))
+
+    def compare_runs(self):
+        from measurement_comparison_gui import MeasurementComparison
+        dialog=MeasurementComparison(self)
+        if self.loaded_directory:dialog.append_run(self.loaded_directory)
+        dialog.exec()
 
     def open_saved(self):
         if self.is_running():return

@@ -1398,3 +1398,21 @@ existing assignment controls.
 DC plots use the marker color; startup overlays use shades of that signal's
 color to distinguish current/voltage combinations. The original board and
 mapping profile is saved with each measurement as before.
+
+### Overlay several saved measurements
+
+Choose **5 · Analysis → Combine saved measurements…**, or **Compare with other
+runs…** in the saved DC/startup viewers. Add metadata.json or measurements.csv
+files from as many compatible runs as needed (multi-select or add repeatedly).
+Rename the run labels, check/uncheck runs, filter by testpoint, or choose the
+DC sweep direction. Signals retain consistent colors across runs; line styles
+identify runs. Voltage/current units have separate axes. Startup records retain
+their recorded trigger-relative time axes; no additional time alignment or
+interpolation is applied. Current/voltage settings and repetitions appear in
+startup legend entries. Probe-correction sidecars are applied automatically.
+
+Startup waveforms, DC current sweeps and DC voltage sweeps must be compared
+separately. Export creates PNG/PDF and a JSON comparison manifest. Reopen the
+manifest with **Open comparison…**; source files must remain accessible at their
+saved paths. The manifest stores labels, visibility and filters, not copied
+measurement data. Source acquisition files are never rewritten.
