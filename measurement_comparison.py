@@ -36,7 +36,11 @@ def compatible(runs,new):
     if runs and runs[0]['kind']!=new['kind']:raise ValueError('Compare startup waveforms, DC current sweeps or DC voltage sweeps separately; their x axes differ.')
 
 
-def draw_comparison(figure,runs,signal=None,direction='both'):
+def series_key(series):
+    return json.dumps([series.get(k,'') for k in ('board','signal','unit','detail','direction')])
+
+
+def draw_comparison(figure,runs,signal=None,direction='both',font_size=14,legend_size=11,line_width=1.8,legend_position='best'):
     figure.clear()
     selected=[(i,r,s) for i,r in enumerate(runs) for s in r['series'] if (signal is None or s['signal']==signal) and (direction=='both' or not s['direction'] or s['direction']==direction)]
     units=list(dict.fromkeys(s['unit'] for _,_,s in selected)) or ['V']
@@ -49,8 +53,10 @@ def draw_comparison(figure,runs,signal=None,direction='both'):
         for i,r,s in selected:
             if s['unit']!=unit:continue
             label=f"{r['label']} · {s['board']} / {s['signal']} · {s['detail']}"
-            ax.plot(s['x'],s['y'],color=colors[s['signal']],linestyle=lines[i%4],marker=markers[(i//4)%len(markers)],markevery=max(1,len(s['x'])//12),linewidth=1,alpha=.8,label=label)
-        ax.set_ylabel(unit);ax.grid(alpha=.25)
-        if ax.lines:ax.legend(fontsize=7)
-    axes[-1].set_xlabel(runs[0]['xlabel'] if runs else 'Load measurements to compare')
+            ax.plot(s['x'],s['y'],color=s.get('display_color') or colors[s['signal']],linestyle=lines[r.get('_style_index',i)%4],marker=markers[(r.get('_style_index',i)//4)%len(markers)],markevery=max(1,len(s['x'])//12),linewidth=line_width,alpha=.9,label=label)
+        ax.set_ylabel(unit,fontsize=font_size);ax.tick_params(labelsize=max(8,font_size-2));ax.grid(alpha=.25)
+        if ax.lines:
+            if legend_position=='outside':ax.legend(fontsize=legend_size,loc='upper left',bbox_to_anchor=(1.01,1),borderaxespad=0)
+            else:ax.legend(fontsize=legend_size,loc='best')
+    axes[-1].set_xlabel(runs[0]['xlabel'] if runs else 'Load measurements to compare',fontsize=font_size)
     figure.tight_layout()

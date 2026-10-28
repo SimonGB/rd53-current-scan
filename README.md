@@ -1416,3 +1416,11 @@ separately. Export creates PNG/PDF and a JSON comparison manifest. Reopen the
 manifest with **Open comparison…**; source files must remain accessible at their
 saved paths. The manifest stores labels, visibility and filters, not copied
 measurement data. Source acquisition files are never rewritten.
+
+Comparison plots use larger labels (14 pt), legends (11 pt) and thicker lines
+by default. Adjust Label size, Legend size, Line width and Legend position in
+the viewer. **Line colors…** edits each run/signal/direction or startup capture
+independently; reset returns to the shared signal color. These display-only
+choices are saved in the comparison JSON and restored on reopening, without
+changing board marker colors or source data. Older comparison JSON files load
+with the new defaults.
